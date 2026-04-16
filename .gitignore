@@ -3,3 +3,4 @@ split.json
 __pycache__/
 *.pyc
 .idea
+logs

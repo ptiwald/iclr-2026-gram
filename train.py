@@ -1,5 +1,7 @@
 import argparse
+import csv
 import importlib
+import os
 import time
 
 import torch
@@ -13,7 +15,7 @@ def get_model_class(name: str):
     return getattr(module, name)
 
 
-def train_one_epoch(model, loader, optimizer, device, max_steps=None):
+def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, step_logger=None):
     model.train()
     total_loss = 0.0
     n_batches = 0
@@ -32,8 +34,12 @@ def train_one_epoch(model, loader, optimizer, device, max_steps=None):
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
+        loss_val = loss.item()
+        total_loss += loss_val
         n_batches += 1
+
+        if step_logger is not None:
+            step_logger(epoch, n_batches, loss_val)
 
         if max_steps is not None and n_batches >= max_steps:
             break
@@ -77,6 +83,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--log-dir", type=str, default="logs")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Stop after N training steps per epoch (default: full epoch)")
     args = parser.parse_args()
@@ -100,27 +107,54 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    # Loss logging — persistent file handles, flushed per write for live tailing
+    os.makedirs(args.log_dir, exist_ok=True)
+    steps_path = os.path.join(args.log_dir, f"{args.model.lower()}_steps.csv")
+    epochs_path = os.path.join(args.log_dir, f"{args.model.lower()}_epochs.csv")
+    steps_file = open(steps_path, "w", newline="")
+    epochs_file = open(epochs_path, "w", newline="")
+    steps_writer = csv.writer(steps_file)
+    epochs_writer = csv.writer(epochs_file)
+    steps_writer.writerow(["epoch", "step_in_epoch", "train_loss"])
+    epochs_writer.writerow(["epoch", "train_loss", "test_loss", "time_s"])
+    steps_file.flush()
+    epochs_file.flush()
+
+    def log_step(epoch, step_in_epoch, loss_val):
+        steps_writer.writerow([epoch, step_in_epoch, f"{loss_val:.6f}"])
+        steps_file.flush()
+
     # Training loop
     best_test_loss = float("inf")
-    for epoch in range(1, args.epochs + 1):
-        t0 = time.time()
-        train_loss = train_one_epoch(model, loaders["train"], optimizer, args.device, args.max_steps)
-        test_loss = evaluate(model, loaders["test"], args.device, args.max_steps)
-        elapsed = time.time() - t0
+    try:
+        for epoch in range(1, args.epochs + 1):
+            t0 = time.time()
+            train_loss = train_one_epoch(
+                model, loaders["train"], optimizer, args.device, epoch,
+                max_steps=args.max_steps, step_logger=log_step,
+            )
+            test_loss = evaluate(model, loaders["test"], args.device, args.max_steps)
+            elapsed = time.time() - t0
 
-        print(f"Epoch {epoch:3d}/{args.epochs} | "
-              f"Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f} | "
-              f"Time: {elapsed:.1f}s")
+            epochs_writer.writerow([epoch, f"{train_loss:.6f}", f"{test_loss:.6f}", f"{elapsed:.2f}"])
+            epochs_file.flush()
 
-        if test_loss < best_test_loss:
-            best_test_loss = test_loss
-            import os
-            os.makedirs(args.checkpoint_dir, exist_ok=True)
-            path = os.path.join(args.checkpoint_dir, f"{args.model.lower()}_best.pt")
-            torch.save(model.state_dict(), path)
-            print(f"  -> Saved best checkpoint to {path}")
+            print(f"Epoch {epoch:3d}/{args.epochs} | "
+                  f"Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f} | "
+                  f"Time: {elapsed:.1f}s")
+
+            if test_loss < best_test_loss:
+                best_test_loss = test_loss
+                os.makedirs(args.checkpoint_dir, exist_ok=True)
+                path = os.path.join(args.checkpoint_dir, f"{args.model.lower()}_best.pt")
+                torch.save(model.state_dict(), path)
+                print(f"  -> Saved best checkpoint to {path}")
+    finally:
+        steps_file.close()
+        epochs_file.close()
 
     print(f"Done. Best test loss: {best_test_loss:.4f}")
+    print(f"Logs: {steps_path} | {epochs_path}")
 
 
 if __name__ == "__main__":
