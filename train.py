@@ -13,7 +13,7 @@ def get_model_class(name: str):
     return getattr(module, name)
 
 
-def train_one_epoch(model, loader, optimizer, device):
+def train_one_epoch(model, loader, optimizer, device, max_steps=None):
     model.train()
     total_loss = 0.0
     n_batches = 0
@@ -35,11 +35,14 @@ def train_one_epoch(model, loader, optimizer, device):
         total_loss += loss.item()
         n_batches += 1
 
+        if max_steps is not None and n_batches >= max_steps:
+            break
+
     return total_loss / n_batches
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, max_steps=None):
     model.eval()
     total_loss = 0.0
     n_batches = 0
@@ -57,6 +60,9 @@ def evaluate(model, loader, device):
         total_loss += loss.item()
         n_batches += 1
 
+        if max_steps is not None and n_batches >= max_steps:
+            break
+
     return total_loss / n_batches
 
 
@@ -71,6 +77,8 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="Stop after N training steps per epoch (default: full epoch)")
     args = parser.parse_args()
 
     print(f"Model: {args.model} | Device: {args.device} | Batch size: {args.batch_size}")
@@ -96,8 +104,8 @@ def main():
     best_test_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        train_loss = train_one_epoch(model, loaders["train"], optimizer, args.device)
-        test_loss = evaluate(model, loaders["test"], args.device)
+        train_loss = train_one_epoch(model, loaders["train"], optimizer, args.device, args.max_steps)
+        test_loss = evaluate(model, loaders["test"], args.device, args.max_steps)
         elapsed = time.time() - t0
 
         print(f"Epoch {epoch:3d}/{args.epochs} | "

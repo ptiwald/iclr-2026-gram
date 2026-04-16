@@ -2,3 +2,4 @@ checkpoints/
 split.json
 __pycache__/
 *.pyc
+.idea
