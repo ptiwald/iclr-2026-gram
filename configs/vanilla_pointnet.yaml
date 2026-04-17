@@ -1,0 +1,11 @@
+model: VanillaPointNet
+data_dir: /home/paul/scratch/gram-competition/warped-ifw/
+split_file: split.json
+batch_size: 2
+num_workers: 2
+lr: 1.0e-3
+epochs: 10
+device: cuda
+checkpoint_dir: checkpoints
+log_dir: logs
+max_steps: null

@@ -5,8 +5,30 @@ import os
 import time
 
 import torch
+import yaml
 
 from data import make_dataloaders
+
+DEFAULTS = {
+    "model": "MLP",
+    "data_dir": "/home/paul/scratch/gram-competition/warped-ifw/",
+    "split_file": "split.json",
+    "batch_size": 2,
+    "num_workers": 2,
+    "lr": 1e-3,
+    "epochs": 10,
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "checkpoint_dir": "checkpoints",
+    "log_dir": "logs",
+    "max_steps": None,
+}
+
+
+def load_config(path: str) -> dict:
+    with open(path) as f:
+        cfg = yaml.safe_load(f)
+    merged = {**DEFAULTS, **cfg}
+    return merged
 
 
 def get_model_class(name: str):
@@ -85,43 +107,34 @@ def evaluate(model, loader, device, max_steps=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Train a model on Warped-IFW data")
-    parser.add_argument("--model", type=str, default="MLP", help="Model class name from models/")
-    parser.add_argument("--data-dir", type=str, default="/home/paul/scratch/gram-competition/warped-ifw/")
-    parser.add_argument("--split-file", type=str, default="split.json")
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
-    parser.add_argument("--log-dir", type=str, default="logs")
-    parser.add_argument("--max-steps", type=int, default=None,
-                        help="Stop after N training steps per epoch (default: full epoch)")
+    parser.add_argument("config", type=str, help="Path to YAML config file")
     args = parser.parse_args()
 
-    print(f"Model: {args.model} | Device: {args.device} | Batch size: {args.batch_size}")
+    cfg = load_config(args.config)
+    print(f"Model: {cfg['model']} | Device: {cfg['device']} | Batch size: {cfg['batch_size']}")
 
     # Data
     loaders = make_dataloaders(
-        data_dir=args.data_dir,
-        split_file=args.split_file,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
+        data_dir=cfg["data_dir"],
+        split_file=cfg["split_file"],
+        batch_size=cfg["batch_size"],
+        num_workers=cfg["num_workers"],
     )
     print(f"Train: {len(loaders['train'].dataset)} samples | Test: {len(loaders['test'].dataset)} samples")
 
     # Model — construct fresh (ignores pretrained weights for training)
-    ModelClass = get_model_class(args.model)
-    model = ModelClass().to(args.device)
+    ModelClass = get_model_class(cfg["model"])
+    model = ModelClass().to(cfg["device"])
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params:,}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
 
     # Loss logging — persistent file handles, flushed per write for live tailing
-    os.makedirs(args.log_dir, exist_ok=True)
-    steps_path = os.path.join(args.log_dir, f"{args.model.lower()}_steps.csv")
-    epochs_path = os.path.join(args.log_dir, f"{args.model.lower()}_epochs.csv")
+    os.makedirs(cfg["log_dir"], exist_ok=True)
+    model_tag = cfg["model"].lower()
+    steps_path = os.path.join(cfg["log_dir"], f"{model_tag}_steps.csv")
+    epochs_path = os.path.join(cfg["log_dir"], f"{model_tag}_epochs.csv")
     steps_file = open(steps_path, "w", newline="")
     epochs_file = open(epochs_path, "w", newline="")
     steps_writer = csv.writer(steps_file)
@@ -138,26 +151,26 @@ def main():
     # Training loop
     best_test_loss = float("inf")
     try:
-        for epoch in range(1, args.epochs + 1):
+        for epoch in range(1, cfg["epochs"] + 1):
             t0 = time.time()
             train_loss = train_one_epoch(
-                model, loaders["train"], optimizer, args.device, epoch,
-                max_steps=args.max_steps, step_logger=log_step,
+                model, loaders["train"], optimizer, cfg["device"], epoch,
+                max_steps=cfg["max_steps"], step_logger=log_step,
             )
-            test_loss = evaluate(model, loaders["test"], args.device, args.max_steps)
+            test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"])
             elapsed = time.time() - t0
 
             epochs_writer.writerow([epoch, f"{train_loss:.6f}", f"{test_loss:.6f}", f"{elapsed:.2f}"])
             epochs_file.flush()
 
-            print(f"Epoch {epoch:3d}/{args.epochs} | "
+            print(f"Epoch {epoch:3d}/{cfg['epochs']} | "
                   f"Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f} | "
                   f"Time: {elapsed:.1f}s")
 
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
-                os.makedirs(args.checkpoint_dir, exist_ok=True)
-                path = os.path.join(args.checkpoint_dir, f"{args.model.lower()}_best.pt")
+                os.makedirs(cfg["checkpoint_dir"], exist_ok=True)
+                path = os.path.join(cfg["checkpoint_dir"], f"{model_tag}_best.pt")
                 torch.save(model.state_dict(), path)
                 print(f"  -> Saved best checkpoint to {path}")
     finally:
