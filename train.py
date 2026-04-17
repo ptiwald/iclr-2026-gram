@@ -28,7 +28,13 @@ def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, ste
         velocity_out = batch["velocity_out"].to(device)
 
         pred = model(t, pos, idcs_airfoil, velocity_in)
-        loss = (pred - velocity_out).norm(dim=-1).mean()
+
+        # L2 norm per point (across 3 velocity components), exclude airfoil surface
+        per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
+        mask = torch.ones_like(per_point_err, dtype=torch.bool)
+        for i, idcs in enumerate(idcs_airfoil):
+            mask[i, :, idcs] = False
+        loss = per_point_err[mask].mean()
 
         optimizer.zero_grad()
         loss.backward()
@@ -61,7 +67,12 @@ def evaluate(model, loader, device, max_steps=None):
         velocity_out = batch["velocity_out"].to(device)
 
         pred = model(t, pos, idcs_airfoil, velocity_in)
-        loss = (pred - velocity_out).norm(dim=-1).mean()
+
+        per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
+        mask = torch.ones_like(per_point_err, dtype=torch.bool)
+        for i, idcs in enumerate(idcs_airfoil):
+            mask[i, :, idcs] = False
+        loss = per_point_err[mask].mean()
 
         total_loss += loss.item()
         n_batches += 1
