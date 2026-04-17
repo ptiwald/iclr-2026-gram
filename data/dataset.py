@@ -39,16 +39,26 @@ def collate_fn(batch: list[dict]) -> dict:
     }
 
 
+def _geometry_key(path: str) -> str:
+    """Extract geometry identifier from a file path.
+
+    E.g. '/data/1021_1-3.npz' -> '1021_1' (everything before the last '-N.npz').
+    """
+    name = os.path.splitext(os.path.basename(path))[0]
+    return name.rsplit("-", 1)[0]
+
+
 def make_split(
     data_dir: str,
     split_file: str,
     train_ratio: float = 0.8,
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Create or load a train/test split of .npz file paths.
+    """Create or load a geometry-level train/test split of .npz file paths.
 
-    If split_file exists, loads it. Otherwise scans data_dir, shuffles,
-    splits, and saves the result to split_file for reproducibility.
+    Splits by geometry so that all time windows of a given geometry land in
+    the same split. This prevents geometry leakage between train and test,
+    matching competition conditions where test geometries are unseen.
     """
     if os.path.exists(split_file):
         with open(split_file) as f:
@@ -58,20 +68,31 @@ def make_split(
     if not paths:
         raise FileNotFoundError(f"No .npz files found in {data_dir}")
 
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(len(paths))
-    n_train = int(len(paths) * train_ratio)
+    geo_to_paths: dict[str, list[str]] = {}
+    for p in paths:
+        geo_to_paths.setdefault(_geometry_key(p), []).append(p)
 
-    split = {
-        "train": [paths[i] for i in indices[:n_train]],
-        "test": [paths[i] for i in indices[n_train:]],
-    }
+    geometries = sorted(geo_to_paths.keys())
+    rng = np.random.default_rng(seed)
+    indices = rng.permutation(len(geometries))
+    n_train = int(len(geometries) * train_ratio)
+
+    train_paths = []
+    test_paths = []
+    for i in indices[:n_train]:
+        train_paths.extend(geo_to_paths[geometries[i]])
+    for i in indices[n_train:]:
+        test_paths.extend(geo_to_paths[geometries[i]])
+
+    split = {"train": train_paths, "test": test_paths}
 
     Path(split_file).parent.mkdir(parents=True, exist_ok=True)
     with open(split_file, "w") as f:
         json.dump(split, f, indent=2)
 
-    print(f"Created split: {len(split['train'])} train, {len(split['test'])} test")
+    n_test_geo = len(geometries) - n_train
+    print(f"Created split: {n_train} geometries ({len(train_paths)} samples) train, "
+          f"{n_test_geo} geometries ({len(test_paths)} samples) test")
     return split
 
 
