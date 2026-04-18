@@ -4,7 +4,7 @@ split_file: split.json
 batch_size: 16
 num_workers: 2
 lr: 1.0e-3
-epochs: 10
+epochs: 100
 device: cuda
 checkpoint_dir: /workspace/checkpoints
 log_dir: /workspace/logs
