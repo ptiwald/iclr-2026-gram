@@ -1,0 +1,12 @@
+# Local machine defaults (Paul's workstation).
+# Merged as a base under model configs; model configs override paths/batch size for remote.
+data_dir: /home/paul/scratch/gram-competition/warped-ifw/
+split_file: split.json
+batch_size: 2
+num_workers: 2
+device: cpu
+checkpoint_dir: checkpoints
+log_dir: logs
+lr: 1.0e-3
+epochs: 10
+max_steps: null
