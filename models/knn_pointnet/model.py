@@ -12,13 +12,15 @@ class KNNPointNet(Module):
     Per-point input: pos (3) + fourier(pos) (3 * 2 * F) + velocity_in (15) + t_start (1).
     With F=6 frequencies [1,2,4,8,16,32], input dim = 3 + 36 + 15 + 1 = 55.
 
-    Step 1: per-point encoder -> 128.
-    Step 2: `num_rounds` rounds of k-NN message passing. Each round gathers k neighbors'
+    Step 1: per-point encoder -> 128 (point-level features).
+    Step 2: `num_rounds` rounds of k-NN message passing starting from the encoder output,
+            producing neighborhood-level features (128). Each round gathers k neighbors'
             features, max-pools, concatenates with the point's own features, and maps
             256 -> 128 via an MLP with independent weights per round.
-    Step 3: global max-pool -> 128; broadcast and concat with local features -> 256.
-    Step 4: per-point decoder 256 -> 15 (5 frames x 3 delta components).
-    Step 5: add deltas to last input frame; hard-mask airfoil points to zero.
+    Step 3: global max-pool over the message-passing output -> 128 (global features).
+    Step 4: decoder sees all three scales concatenated: point + neighborhood + global (384).
+    Step 5: per-point decoder 384 -> 15 (5 frames x 3 delta components).
+    Step 6: add deltas to last input frame; hard-mask airfoil points to zero.
     """
 
     FREQS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
@@ -57,7 +59,7 @@ class KNNPointNet(Module):
         ])
 
         self.decoder = Sequential(
-            Linear(2 * hidden, 2 * hidden),
+            Linear(3 * hidden, 2 * hidden),
             LayerNorm(2 * hidden),
             ReLU(),
             Linear(2 * hidden, 15),
@@ -102,22 +104,22 @@ class KNNPointNet(Module):
 
         x = torch.cat([pos, pos_fourier, vel_flat, t_start], dim=2)  # (B, N, in_dim)
 
-        local = self.encoder(x)  # (B, N, H)
+        point_feat = self.encoder(x)  # (B, N, H) -- point-level
 
         # Flatten for k-NN. batch vector marks which sample each point belongs to.
-        local_flat = local.reshape(batch_size * num_pos, -1)
+        mp_flat = point_feat.reshape(batch_size * num_pos, -1)
         pos_flat = pos.reshape(batch_size * num_pos, 3)
         batch_vec = torch.arange(batch_size, device=pos.device).repeat_interleave(num_pos)
 
         for mlp in self.mp_mlps:
-            neigh = self._knn_maxpool(local_flat, pos_flat, batch_vec)
-            local_flat = mlp(torch.cat([local_flat, neigh], dim=-1))
+            neigh = self._knn_maxpool(mp_flat, pos_flat, batch_vec)
+            mp_flat = mlp(torch.cat([mp_flat, neigh], dim=-1))
 
-        local = local_flat.view(batch_size, num_pos, -1)  # (B, N, H)
+        neighborhood_feat = mp_flat.view(batch_size, num_pos, -1)  # (B, N, H)
 
-        global_feat = local.max(dim=1).values  # (B, H)
+        global_feat = neighborhood_feat.max(dim=1).values  # (B, H)
         global_feat = global_feat.unsqueeze(1).expand(-1, num_pos, -1)
-        combined = torch.cat([local, global_feat], dim=2)  # (B, N, 2H)
+        combined = torch.cat([point_feat, neighborhood_feat, global_feat], dim=2)  # (B, N, 3H)
 
         delta = self.decoder(combined).view(batch_size, num_pos, num_t_in, 3)
         last_frame = velocity_in[:, -1, :, :]
