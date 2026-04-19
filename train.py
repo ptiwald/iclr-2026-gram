@@ -21,6 +21,7 @@ DEFAULTS = {
     "checkpoint_dir": "checkpoints",
     "log_dir": "logs",
     "max_steps": None,
+    "bf16": False,
 }
 
 
@@ -37,10 +38,12 @@ def get_model_class(name: str):
     return getattr(module, name)
 
 
-def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, step_logger=None):
+def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, step_logger=None, bf16=False):
     model.train()
     total_loss = 0.0
     n_batches = 0
+
+    autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
 
     for batch in loader:
         t = batch["t"].to(device)
@@ -49,14 +52,15 @@ def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, ste
         velocity_in = batch["velocity_in"].to(device)
         velocity_out = batch["velocity_out"].to(device)
 
-        pred = model(t, pos, idcs_airfoil, velocity_in)
+        with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=bf16):
+            pred = model(t, pos, idcs_airfoil, velocity_in)
 
-        # L2 norm per point (across 3 velocity components), exclude airfoil surface
-        per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
-        mask = torch.ones_like(per_point_err, dtype=torch.bool)
-        for i, idcs in enumerate(idcs_airfoil):
-            mask[i, :, idcs] = False
-        loss = per_point_err[mask].mean()
+            # L2 norm per point (across 3 velocity components), exclude airfoil surface
+            per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
+            mask = torch.ones_like(per_point_err, dtype=torch.bool)
+            for i, idcs in enumerate(idcs_airfoil):
+                mask[i, :, idcs] = False
+            loss = per_point_err[mask].mean()
 
         optimizer.zero_grad()
         loss.backward()
@@ -76,10 +80,12 @@ def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, ste
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, max_steps=None):
+def evaluate(model, loader, device, max_steps=None, bf16=False):
     model.eval()
     total_loss = 0.0
     n_batches = 0
+
+    autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
 
     for batch in loader:
         t = batch["t"].to(device)
@@ -88,13 +94,14 @@ def evaluate(model, loader, device, max_steps=None):
         velocity_in = batch["velocity_in"].to(device)
         velocity_out = batch["velocity_out"].to(device)
 
-        pred = model(t, pos, idcs_airfoil, velocity_in)
+        with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=bf16):
+            pred = model(t, pos, idcs_airfoil, velocity_in)
 
-        per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
-        mask = torch.ones_like(per_point_err, dtype=torch.bool)
-        for i, idcs in enumerate(idcs_airfoil):
-            mask[i, :, idcs] = False
-        loss = per_point_err[mask].mean()
+            per_point_err = (pred - velocity_out).norm(dim=3)  # (B, 5, N)
+            mask = torch.ones_like(per_point_err, dtype=torch.bool)
+            for i, idcs in enumerate(idcs_airfoil):
+                mask[i, :, idcs] = False
+            loss = per_point_err[mask].mean()
 
         total_loss += loss.item()
         n_batches += 1
@@ -156,9 +163,9 @@ def main():
             t0 = time.time()
             train_loss = train_one_epoch(
                 model, loaders["train"], optimizer, cfg["device"], epoch,
-                max_steps=cfg["max_steps"], step_logger=log_step,
+                max_steps=cfg["max_steps"], step_logger=log_step, bf16=cfg["bf16"],
             )
-            test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"])
+            test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
             elapsed = time.time() - t0
 
             epochs_writer.writerow([epoch, f"{train_loss:.6f}", f"{test_loss:.6f}", f"{elapsed:.2f}"])
