@@ -16,6 +16,7 @@ DEFAULTS = {
     "batch_size": 15,
     "num_workers": 4,
     "device": "cpu",
+    "bf16": False,
 }
 
 
@@ -31,9 +32,11 @@ def get_model_class(name: str):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, bf16=False):
     model.eval()
     last_frame = LastFrame().to(device).eval()
+
+    autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
 
     per_sample = []
     batch_losses = []
@@ -49,8 +52,11 @@ def evaluate(model, loader, device):
         velocity_in = batch["velocity_in"].to(device)
         velocity_out = batch["velocity_out"].to(device)
 
-        pred = model(t, pos, idcs_airfoil, velocity_in)
-        lf_pred = last_frame(t, pos, idcs_airfoil, velocity_in)
+        with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=bf16):
+            pred = model(t, pos, idcs_airfoil, velocity_in)
+            lf_pred = last_frame(t, pos, idcs_airfoil, velocity_in)
+        pred = pred.float()
+        lf_pred = lf_pred.float()
 
         # main.py metric: per-sample L2 norm averaged over timesteps and points.
         per_sample.append((pred - velocity_out).norm(dim=3).mean(dim=(1, 2)))
@@ -108,7 +114,7 @@ def main(cfg):
           f"Split: {cfg['split']} ({len(loader.dataset)} samples)"
           + (f" | Checkpoint: {cfg['checkpoint']}" if cfg["checkpoint"] else ""))
 
-    r = evaluate(model, loader, cfg["device"])
+    r = evaluate(model, loader, cfg["device"], bf16=cfg["bf16"])
     print(f"Metric: {r['metric'].mean():.4f} +- {r['metric'].std():.4f}")
     print(f"Val loss (train.py-style): {r['val_loss']:.4f}")
     print()
