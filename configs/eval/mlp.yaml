@@ -1,0 +1,2 @@
+model: MLP
+checkpoint: scratch/checkpoints_runpod/mlp_best.pt

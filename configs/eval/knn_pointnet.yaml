@@ -1,0 +1,2 @@
+model: KNNPointNet
+checkpoint: scratch/checkpoints_runpod/knnpointnet_best.pt

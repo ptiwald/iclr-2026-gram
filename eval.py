@@ -1,10 +1,27 @@
 import argparse
 import importlib
-import os
 
 import torch
+import yaml
 
 from data import make_dataloaders
+
+DEFAULTS = {
+    "model": "MLP",
+    "checkpoint": None,
+    "split": "test",
+    "data_dir": "/home/paul/scratch/gram-competition/warped-ifw/",
+    "split_file": "split.json",
+    "batch_size": 2,
+    "num_workers": 2,
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+}
+
+
+def load_config(path: str) -> dict:
+    with open(path) as f:
+        cfg = yaml.safe_load(f)
+    return {**DEFAULTS, **cfg}
 
 
 def get_model_class(name: str):
@@ -36,38 +53,32 @@ def evaluate(model, loader, device):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a model on the Warped-IFW split")
-    parser.add_argument("--model", type=str, default="MLP")
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Optional state_dict path to load after construction")
-    parser.add_argument("--split", type=str, default="test", choices=["train", "test"])
-    parser.add_argument("--data-dir", type=str, default="/home/paul/scratch/gram-competition/warped-ifw/")
-    parser.add_argument("--split-file", type=str, default="split.json")
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("config", type=str, help="Path to YAML config file")
     args = parser.parse_args()
 
+    cfg = load_config(args.config)
+
     loaders = make_dataloaders(
-        data_dir=args.data_dir,
-        split_file=args.split_file,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
+        data_dir=cfg["data_dir"],
+        split_file=cfg["split_file"],
+        batch_size=cfg["batch_size"],
+        num_workers=cfg["num_workers"],
     )
-    loader = loaders[args.split]
+    loader = loaders[cfg["split"]]
 
-    ModelClass = get_model_class(args.model)
-    model = ModelClass().to(args.device)
+    ModelClass = get_model_class(cfg["model"])
+    model = ModelClass().to(cfg["device"])
 
-    if args.checkpoint is not None:
-        state_dict = torch.load(args.checkpoint, map_location=args.device)
+    if cfg["checkpoint"] is not None:
+        state_dict = torch.load(cfg["checkpoint"], map_location=cfg["device"], weights_only=True)
         model.load_state_dict(state_dict)
 
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"Model: {args.model} | Params: {n_params:,} | Device: {args.device} | "
-          f"Split: {args.split} ({len(loader.dataset)} samples)"
-          + (f" | Checkpoint: {args.checkpoint}" if args.checkpoint else ""))
+    print(f"Model: {cfg['model']} | Params: {n_params:,} | Device: {cfg['device']} | "
+          f"Split: {cfg['split']} ({len(loader.dataset)} samples)"
+          + (f" | Checkpoint: {cfg['checkpoint']}" if cfg["checkpoint"] else ""))
 
-    metric, val_loss = evaluate(model, loader, args.device)
+    metric, val_loss = evaluate(model, loader, cfg["device"])
     print(f"Metric: {metric.mean():.4f} +- {metric.std():.4f}")
     print(f"Val loss (train.py-style): {val_loss:.4f}")
 

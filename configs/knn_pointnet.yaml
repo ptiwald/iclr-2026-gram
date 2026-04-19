@@ -1,7 +1,7 @@
-model: VanillaPointNet
+model: KNNPointNet
 data_dir: /workspace/data/warped-ifw
 split_file: split.json
-batch_size: 16
+batch_size: 8
 num_workers: 2
 lr: 1.0e-3
 epochs: 100

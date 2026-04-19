@@ -1,4 +1,4 @@
-model: VanillaPointNet
+model: FourierPointNet
 data_dir: /workspace/data/warped-ifw
 split_file: split.json
 batch_size: 16
