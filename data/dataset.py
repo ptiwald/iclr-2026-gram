@@ -103,6 +103,7 @@ def make_dataloaders(
     num_workers: int = 2,
     train_ratio: float = 0.8,
     seed: int = 42,
+    pin_memory: bool = False,
 ) -> dict[str, DataLoader]:
     """Create train and test DataLoaders."""
     split = make_split(data_dir, split_file, train_ratio, seed)
@@ -116,6 +117,6 @@ def make_dataloaders(
             shuffle=(name == "train"),
             num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=pin_memory,
         )
     return loaders
