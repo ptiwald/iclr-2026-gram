@@ -22,6 +22,8 @@ DEFAULTS = {
     "log_dir": "logs",
     "max_steps": None,
     "bf16": False,
+    "lr_schedule": None,  # None or "cosine"
+    "min_lr": 0.0,
 }
 
 
@@ -138,6 +140,14 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
 
+    scheduler = None
+    if cfg["lr_schedule"] == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["epochs"], eta_min=cfg["min_lr"],
+        )
+    elif cfg["lr_schedule"] is not None:
+        raise ValueError(f"Unknown lr_schedule: {cfg['lr_schedule']}")
+
     # Loss logging — persistent file handles, flushed per write for live tailing
     os.makedirs(cfg["log_dir"], exist_ok=True)
     model_tag = cfg["model"].lower()
@@ -166,6 +176,8 @@ def main():
                 max_steps=cfg["max_steps"], step_logger=log_step, bf16=cfg["bf16"],
             )
             test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
+            if scheduler is not None:
+                scheduler.step()
             elapsed = time.time() - t0
 
             epochs_writer.writerow([epoch, f"{train_loss:.6f}", f"{test_loss:.6f}", f"{elapsed:.2f}"])
