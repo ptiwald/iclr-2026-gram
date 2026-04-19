@@ -119,6 +119,7 @@ def main():
         split_file=cfg["split_file"],
         batch_size=cfg["batch_size"],
         num_workers=cfg["num_workers"],
+        pin_memory=cfg["device"].startswith("cuda"),
     )
     print(f"Train: {len(loaders['train'].dataset)} samples | Test: {len(loaders['test'].dataset)} samples")
 
