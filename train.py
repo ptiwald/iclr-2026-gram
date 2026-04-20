@@ -24,6 +24,7 @@ DEFAULTS = {
     "bf16": False,
     "lr_schedule": None,  # None or "cosine"
     "min_lr": 0.0,
+    "model_kwargs": {},
 }
 
 
@@ -134,7 +135,7 @@ def main():
 
     # Model — construct fresh (ignores pretrained weights for training)
     ModelClass = get_model_class(cfg["model"])
-    model = ModelClass().to(cfg["device"])
+    model = ModelClass(**cfg["model_kwargs"]).to(cfg["device"])
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params:,}")
 

@@ -1,0 +1,23 @@
+model: ABUPT
+data_dir: /workspace/data/warped-ifw
+split_file: split.json
+batch_size: 4
+num_workers: 2
+lr: 5.0e-4
+lr_schedule: cosine
+min_lr: 0.0
+epochs: 400
+device: cuda
+checkpoint_dir: /workspace/checkpoints
+log_dir: /workspace/logs
+max_steps: null
+bf16: true
+model_kwargs:
+  hidden: 192
+  num_surface_supernodes: 128
+  num_volume_supernodes: 384
+  num_approx_blocks: 6
+  num_heads: 4
+  encoder_k: 8
+  ffn_mult: 2
+  cross_branch_every: 2
