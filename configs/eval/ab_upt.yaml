@@ -1,4 +1,14 @@
 model: ABUPT
 checkpoint: /workspace/checkpoints/abupt_best.pt
 batch_size: 15
-bf16: True
+bf16: true
+model_kwargs:
+  hidden: 256
+  num_surface_supernodes: 128
+  num_volume_supernodes: 384
+  num_approx_blocks: 8
+  num_heads: 4
+  encoder_k: 8
+  ffn_mult: 2
+  cross_branch_every: 2
+
