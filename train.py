@@ -124,6 +124,7 @@ def main():
 
     # Data
     loaders = make_dataloaders(
+        data_dir=cfg["data_dir"],
         split_file=cfg["split_file"],
         batch_size=cfg["batch_size"],
         num_workers=cfg["num_workers"],

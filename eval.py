@@ -15,7 +15,7 @@ DEFAULTS = {
     "split_file": "split.json",
     "batch_size": 15,
     "num_workers": 4,
-    "device": "cuda",
+    "device": "cpu",
     "bf16": False,
 }
 
@@ -94,6 +94,7 @@ def evaluate(model, loader, device, bf16=False):
 
 def main(cfg):
     loaders = make_dataloaders(
+        data_dir=cfg["data_dir"],
         split_file=cfg["split_file"],
         batch_size=cfg["batch_size"],
         num_workers=cfg["num_workers"],

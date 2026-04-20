@@ -77,52 +77,61 @@ def make_split(
 
     Splits by geometry so that all time windows of a given geometry land in
     the same split, matching competition conditions where test geometries are
-    unseen. Only call this when you intentionally want a new split — the
-    loaders use `load_split` and will not regenerate.
+    unseen. The split stores bare filenames (no directory prefix) so the same
+    file is portable across machines with different data dirs. Only call this
+    when you intentionally want a new split — the loaders use `load_split`
+    and will not regenerate.
     """
     paths = sorted(glob(os.path.join(data_dir, "*.npz")))
     if not paths:
         raise FileNotFoundError(f"No .npz files found in {data_dir}")
 
-    geo_to_paths: dict[str, list[str]] = {}
-    for p in paths:
-        geo_to_paths.setdefault(_geometry_key(p), []).append(p)
+    names = [os.path.basename(p) for p in paths]
+    geo_to_names: dict[str, list[str]] = {}
+    for n in names:
+        geo_to_names.setdefault(_geometry_key(n), []).append(n)
 
-    geometries = sorted(geo_to_paths.keys())
+    geometries = sorted(geo_to_names.keys())
     rng = np.random.default_rng(seed)
     indices = rng.permutation(len(geometries))
     n_train = int(len(geometries) * train_ratio)
 
-    train_paths = []
-    test_paths = []
+    train_names: list[str] = []
+    test_names: list[str] = []
     for i in indices[:n_train]:
-        train_paths.extend(geo_to_paths[geometries[i]])
+        train_names.extend(geo_to_names[geometries[i]])
     for i in indices[n_train:]:
-        test_paths.extend(geo_to_paths[geometries[i]])
+        test_names.extend(geo_to_names[geometries[i]])
 
-    split = {"train": train_paths, "test": test_paths}
+    split = {"train": train_names, "test": test_names}
 
     Path(split_file).parent.mkdir(parents=True, exist_ok=True)
     with open(split_file, "w") as f:
         json.dump(split, f, indent=2)
 
     n_test_geo = len(geometries) - n_train
-    print(f"Created split: {n_train} geometries ({len(train_paths)} samples) train, "
-          f"{n_test_geo} geometries ({len(test_paths)} samples) test")
+    print(f"Created split: {n_train} geometries ({len(train_names)} samples) train, "
+          f"{n_test_geo} geometries ({len(test_names)} samples) test")
     return split
 
 
 def make_dataloaders(
+    data_dir: str,
     split_file: str = "split.json",
     batch_size: int = 2,
     num_workers: int = 2,
     pin_memory: bool = False,
 ) -> dict[str, DataLoader]:
-    """Create train and test DataLoaders using the canonical committed split."""
+    """Create train and test DataLoaders using the canonical committed split.
+
+    `data_dir` is the machine-local location of the .npz files; it is
+    prepended to the bare filenames stored in the split.
+    """
     split = load_split(split_file)
 
     loaders = {}
-    for name, paths in split.items():
+    for name, filenames in split.items():
+        paths = [os.path.join(data_dir, fn) for fn in filenames]
         dataset = WarpedIFWDataset(paths)
         loaders[name] = DataLoader(
             dataset,
