@@ -22,9 +22,9 @@ Key details:
 - **Difficulty:** capturing high-frequency turbulent components alongside low-frequency laminar flow
 - **Evaluation:** accuracy of predicted 3D velocity fields vs ground truth on a held-out test set (exact metric undisclosed; `main.py` hints at L2 norm averaged over points and timesteps)
 
-## Local Data
+## Data Location
 
-The dataset resides at `/home/paul/scratch/gram-competition/warped-ifw/` (810 `.npz` files, ~17MB each). Each file contains one sample (unbatched) with keys:
+The default `data_dir` in `train.py` / `eval.py` is `/workspace/data/warped-ifw/` — the path on the remote training machine. On the local box the dataset lives at `/home/paul/scratch/gram-competition/warped-ifw/`; use `configs/local.yaml` (which sets `data_dir` accordingly) when running locally. `split.json` stores bare filenames, so the same split is portable across both machines. 810 `.npz` files total, ~17MB each. Each file contains one sample (unbatched) with keys:
 - `t`: (10,) — temporal coordinates
 - `pos`: (100000, 3) — spatial positions
 - `idcs_airfoil`: (variable,) — indices into `pos` marking airfoil surface points

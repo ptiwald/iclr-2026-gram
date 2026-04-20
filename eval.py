@@ -11,11 +11,11 @@ DEFAULTS = {
     "model": "MLP",
     "checkpoint": None,
     "split": "test",
-    "data_dir": "/home/paul/scratch/gram-competition/warped-ifw/",
+    "data_dir": "/workspace/data/warped-ifw/",
     "split_file": "split.json",
     "batch_size": 15,
     "num_workers": 4,
-    "device": "cpu",
+    "device": "cuda",
     "bf16": False,
 }
 
