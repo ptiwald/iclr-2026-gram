@@ -15,7 +15,7 @@ DEFAULTS = {
     "split_file": "split.json",
     "batch_size": 15,
     "num_workers": 4,
-    "device": "cpu",
+    "device": "cuda",
     "bf16": False,
 }
 
