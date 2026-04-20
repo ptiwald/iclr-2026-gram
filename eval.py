@@ -17,6 +17,7 @@ DEFAULTS = {
     "num_workers": 4,
     "device": "cuda",
     "bf16": False,
+    "model_kwargs": {},
 }
 
 
@@ -103,7 +104,7 @@ def main(cfg):
     loader = loaders[cfg["split"]]
 
     ModelClass = get_model_class(cfg["model"])
-    model = ModelClass().to(cfg["device"])
+    model = ModelClass(**cfg["model_kwargs"]).to(cfg["device"])
 
     if cfg["checkpoint"] is not None:
         state_dict = torch.load(cfg["checkpoint"], map_location=cfg["device"], weights_only=True)
