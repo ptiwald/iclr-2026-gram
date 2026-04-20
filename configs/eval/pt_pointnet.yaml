@@ -1,0 +1,4 @@
+model: PTPointNet
+checkpoint: /workspace/checkpoints/ptpointnet_best.pt
+batch_size: 5
+bf16: True

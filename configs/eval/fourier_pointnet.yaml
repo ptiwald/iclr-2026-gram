@@ -1,0 +1,2 @@
+model: FourierPointNet
+checkpoint: /workspace/checkpoints/fourierpointnet_best.pt

@@ -1,0 +1,2 @@
+model: MLP
+checkpoint: /workspace/checkpoints/mlp_best.pt

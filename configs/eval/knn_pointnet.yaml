@@ -1,0 +1,2 @@
+model: KNNPointNet
+checkpoint: /workspace/checkpoints/knnpointnet_best.pt

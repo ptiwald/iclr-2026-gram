@@ -11,15 +11,15 @@ from data import make_dataloaders
 
 DEFAULTS = {
     "model": "MLP",
-    "data_dir": "/home/paul/scratch/gram-competition/warped-ifw/",
+    "data_dir": "/workspace/data/warped-ifw/",
     "split_file": "split.json",
-    "batch_size": 2,
+    "batch_size": 8,
     "num_workers": 2,
     "lr": 1e-3,
-    "epochs": 10,
+    "epochs": 100,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "checkpoint_dir": "checkpoints",
-    "log_dir": "logs",
+    "checkpoint_dir": "/workspace/checkpoints",
+    "log_dir": "/workspace/logs/",
     "max_steps": None,
     "bf16": False,
     "lr_schedule": None,  # None or "cosine"

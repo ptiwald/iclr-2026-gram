@@ -1,0 +1,2 @@
+model: VanillaPointNet
+checkpoint: /workspace/checkpoints/vanillapointnet_best.pt
