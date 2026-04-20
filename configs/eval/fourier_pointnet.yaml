@@ -1,2 +1,2 @@
 model: FourierPointNet
-checkpoint: scratch/checkpoints_runpod/fourierpointnet_best.pt
+checkpoint: /workspace/checkpoints/fourierpointnet_best.pt

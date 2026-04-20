@@ -1,4 +1,2 @@
 model: PTPointNet
-checkpoint: scratch/checkpoints_runpod/ptpointnet_best.pt
-bf16: true
-batch_size: 8
+checkpoint: /workspace/checkpoints/ptpointnet_best.pt

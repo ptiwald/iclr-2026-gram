@@ -1,2 +1,2 @@
 model: VanillaPointNet
-checkpoint: scratch/checkpoints_runpod/vanillapointnet_best.pt
+checkpoint: /workspace/checkpoints/vanillapointnet_best.pt
