@@ -1,0 +1,4 @@
+model: ABUPT
+checkpoint: /workspace/checkpoints/abupt_best.pt
+batch_size: 15
+bf16: True
