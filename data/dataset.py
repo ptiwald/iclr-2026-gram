@@ -48,22 +48,38 @@ def _geometry_key(path: str) -> str:
     return name.rsplit("-", 1)[0]
 
 
+def load_split(split_file: str) -> dict[str, list[str]]:
+    """Load the canonical geometry-level train/test split.
+
+    The split is committed to the repo and must not be regenerated implicitly —
+    regenerating on a different machine (or with different files in the data
+    dir) would silently produce a different test set and invalidate
+    cross-machine comparisons. To regenerate intentionally, call
+    `make_split(...)` from a script.
+    """
+    if not os.path.exists(split_file):
+        raise FileNotFoundError(
+            f"{split_file} not found. The split is canonical and committed to "
+            f"the repo; run `make_split` explicitly if you really intend to "
+            f"regenerate it."
+        )
+    with open(split_file) as f:
+        return json.load(f)
+
+
 def make_split(
     data_dir: str,
     split_file: str,
     train_ratio: float = 0.8,
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Create or load a geometry-level train/test split of .npz file paths.
+    """Generate a geometry-level train/test split and write it to disk.
 
     Splits by geometry so that all time windows of a given geometry land in
-    the same split. This prevents geometry leakage between train and test,
-    matching competition conditions where test geometries are unseen.
+    the same split, matching competition conditions where test geometries are
+    unseen. Only call this when you intentionally want a new split — the
+    loaders use `load_split` and will not regenerate.
     """
-    if os.path.exists(split_file):
-        with open(split_file) as f:
-            return json.load(f)
-
     paths = sorted(glob(os.path.join(data_dir, "*.npz")))
     if not paths:
         raise FileNotFoundError(f"No .npz files found in {data_dir}")
@@ -97,16 +113,13 @@ def make_split(
 
 
 def make_dataloaders(
-    data_dir: str,
     split_file: str = "split.json",
     batch_size: int = 2,
     num_workers: int = 2,
-    train_ratio: float = 0.8,
-    seed: int = 42,
     pin_memory: bool = False,
 ) -> dict[str, DataLoader]:
-    """Create train and test DataLoaders."""
-    split = make_split(data_dir, split_file, train_ratio, seed)
+    """Create train and test DataLoaders using the canonical committed split."""
+    split = load_split(split_file)
 
     loaders = {}
     for name, paths in split.items():
