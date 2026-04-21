@@ -3,6 +3,7 @@ import os
 
 import torch
 from torch.nn import LayerNorm, Linear, Module, ModuleList, ReLU, Sequential
+from torch.utils.checkpoint import checkpoint
 from torch_cluster import knn
 
 
@@ -26,6 +27,8 @@ class PTPointNet(Module):
         k: int = 16,
         hidden: int = 128,
         num_heads: int = 4,
+        ffn_mult: int = 2,
+        use_checkpoint: bool = False,
     ):
         super().__init__()
         assert hidden % num_heads == 0
@@ -35,6 +38,8 @@ class PTPointNet(Module):
         self.hidden = hidden
         self.num_heads = num_heads
         self.head_dim = hidden // num_heads
+        self.ffn_mult = ffn_mult
+        self.use_checkpoint = use_checkpoint
 
         self.register_buffer(
             "freqs",
@@ -52,7 +57,7 @@ class PTPointNet(Module):
         )
 
         self.blocks = ModuleList(
-            [PTBlock(hidden, num_heads, ffn_mult=2) for _ in range(num_blocks)]
+            [PTBlock(hidden, num_heads, ffn_mult=ffn_mult) for _ in range(num_blocks)]
         )
 
         self.decoder = Sequential(
@@ -104,7 +109,12 @@ class PTPointNet(Module):
         rel_pos = pos_flat.unsqueeze(1) - pos_flat[neigh_idx]  # (N_total, k, 3)
 
         for block in self.blocks:
-            feats_flat = block(feats_flat, neigh_idx, rel_pos)
+            if self.use_checkpoint and self.training:
+                feats_flat = checkpoint(
+                    block, feats_flat, neigh_idx, rel_pos, use_reentrant=False,
+                )
+            else:
+                feats_flat = block(feats_flat, neigh_idx, rel_pos)
 
         neighborhood_feat = feats_flat.view(batch_size, num_pos, -1)
 

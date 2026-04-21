@@ -12,3 +12,10 @@ checkpoint_dir: /workspace/checkpoints
 log_dir: /workspace/logs
 max_steps: null
 bf16: true
+model_kwargs:
+  num_blocks: 2
+  k: 16
+  hidden: 128
+  num_heads: 4
+  ffn_mult: 2
+  use_checkpoint: true
