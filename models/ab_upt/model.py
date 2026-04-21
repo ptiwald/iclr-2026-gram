@@ -169,17 +169,28 @@ class ABUPT(Module):
 
         super_pos_flat = super_pos.reshape(B * M, 3)
         pos_flat = pos.reshape(B * N, 3)
+        point_feat_flat = point_feat.reshape(B * N, -1)
         batch_super = torch.arange(B, device=device).repeat_interleave(M)
         batch_pts = torch.arange(B, device=device).repeat_interleave(N)
 
-        # For each supernode, k nearest points in its own batch element.
-        edge = knn(
-            pos_flat, super_pos_flat, self.encoder_k,
-            batch_x=batch_pts, batch_y=batch_super,
-        )
-        neigh_idx = edge[1].view(B * M, self.encoder_k)
+        # Volume-only candidate pool for kNN. Both surface and volume supernodes
+        # pool from this to avoid diluting the pooled message with v=0 neighbors
+        # at the wall. Wall location is already conveyed by is_surface (per-point
+        # input feature) and by the surface branch via cross-branch attention.
+        vol_pool_mask = torch.ones(B, N, dtype=torch.bool, device=device)
+        for i, idcs in enumerate(idcs_airfoil):
+            vol_pool_mask[i, idcs] = False
+        vol_pool_global = vol_pool_mask.reshape(-1).nonzero(as_tuple=False).squeeze(-1)
+        vol_pool_pos = pos_flat[vol_pool_global]
+        batch_vol_pool = batch_pts[vol_pool_global]
 
-        point_feat_flat = point_feat.reshape(B * N, -1)
+        edge = knn(
+            vol_pool_pos, super_pos_flat, self.encoder_k,
+            batch_x=batch_vol_pool, batch_y=batch_super,
+        )
+        neigh_local = edge[1].view(B * M, self.encoder_k)
+        neigh_idx = vol_pool_global[neigh_local]  # remap to B*N indexing
+
         neigh_feat = point_feat_flat[neigh_idx]
         neigh_pos = pos_flat[neigh_idx]
         rel_pos = neigh_pos - super_pos_flat.unsqueeze(1)
