@@ -26,7 +26,9 @@ class ABUPT(Module):
         self,
         hidden: int = 192,
         num_surface_supernodes: int = 128,
-        num_volume_supernodes: int = 384,
+        num_wake_supernodes: int = 256,
+        num_far_supernodes: int = 128,
+        wake_pool_frac: float = 0.2,
         num_approx_blocks: int = 6,
         num_heads: int = 4,
         encoder_k: int = 8,
@@ -38,7 +40,9 @@ class ABUPT(Module):
 
         self.hidden = hidden
         self.num_surface_supernodes = num_surface_supernodes
-        self.num_volume_supernodes = num_volume_supernodes
+        self.num_wake_supernodes = num_wake_supernodes
+        self.num_far_supernodes = num_far_supernodes
+        self.wake_pool_frac = wake_pool_frac
         self.num_heads = num_heads
         self.head_dim = hidden // num_heads
         self.encoder_k = encoder_k
@@ -70,8 +74,8 @@ class ABUPT(Module):
             ReLU(),
             Linear(hidden, hidden),
         )
-        # 0 = volume, 1 = surface
-        self.type_embed = Embedding(2, hidden)
+        # 0 = far, 1 = wake, 2 = surface
+        self.type_embed = Embedding(3, hidden)
         self.supernode_ln = LayerNorm(hidden)
 
         self.blocks = ModuleList([
@@ -104,17 +108,24 @@ class ABUPT(Module):
 
     def _sample_supernodes(
         self,
-        num_pos: int,
+        pos: torch.Tensor,
+        velocity_in: torch.Tensor,
         idcs_airfoil: list[torch.Tensor],
-        device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Per batch element: N_s random surface indices + N_v random volume indices."""
-        B = len(idcs_airfoil)
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Per batch element: N_s surface + N_w wake (top-variance) + N_f far-field indices."""
+        B, N, _ = pos.shape
+        device = pos.device
         N_s = self.num_surface_supernodes
-        N_v = self.num_volume_supernodes
+        N_w = self.num_wake_supernodes
+        N_f = self.num_far_supernodes
+
+        # Per-point temporal variance of the input velocity, summed over components.
+        # Zero on the wall (v=0 for all t) and in the steady far-field; peaks in the wake.
+        vel_var = velocity_in.float().var(dim=1).sum(dim=-1)  # (B, N)
 
         surf_idx = torch.empty((B, N_s), dtype=torch.long, device=device)
-        vol_idx = torch.empty((B, N_v), dtype=torch.long, device=device)
+        wake_idx = torch.empty((B, N_w), dtype=torch.long, device=device)
+        far_idx = torch.empty((B, N_f), dtype=torch.long, device=device)
 
         for i, airfoil_idcs in enumerate(idcs_airfoil):
             n_surface = airfoil_idcs.numel()
@@ -124,17 +135,35 @@ class ABUPT(Module):
                 perm = torch.randint(n_surface, (N_s,), device=device)
             surf_idx[i] = airfoil_idcs[perm]
 
-            mask = torch.ones(num_pos, dtype=torch.bool, device=device)
+            mask = torch.ones(N, dtype=torch.bool, device=device)
             mask[airfoil_idcs] = False
-            volume_pool = mask.nonzero(as_tuple=False).squeeze(-1)
-            n_volume = volume_pool.numel()
-            if n_volume >= N_v:
-                perm = torch.randperm(n_volume, device=device)[:N_v]
-            else:
-                perm = torch.randint(n_volume, (N_v,), device=device)
-            vol_idx[i] = volume_pool[perm]
+            vol_pool = mask.nonzero(as_tuple=False).squeeze(-1)
+            n_vol = vol_pool.numel()
 
-        return surf_idx, vol_idx
+            scores = vel_var[i, vol_pool]
+            n_wake_pool = max(N_w, int(self.wake_pool_frac * n_vol))
+            n_wake_pool = min(n_wake_pool, n_vol)
+            _, top = scores.topk(n_wake_pool)
+            wake_pool = vol_pool[top]
+
+            far_mask = torch.ones(n_vol, dtype=torch.bool, device=device)
+            far_mask[top] = False
+            far_pool = vol_pool[far_mask.nonzero(as_tuple=False).squeeze(-1)]
+            n_far_pool = far_pool.numel()
+
+            if n_wake_pool >= N_w:
+                perm = torch.randperm(n_wake_pool, device=device)[:N_w]
+            else:
+                perm = torch.randint(n_wake_pool, (N_w,), device=device)
+            wake_idx[i] = wake_pool[perm]
+
+            if n_far_pool >= N_f:
+                perm = torch.randperm(n_far_pool, device=device)[:N_f]
+            else:
+                perm = torch.randint(n_far_pool, (N_f,), device=device)
+            far_idx[i] = far_pool[perm]
+
+        return surf_idx, wake_idx, far_idx
 
     def forward(
         self,
@@ -157,15 +186,18 @@ class ABUPT(Module):
         x = torch.cat([pos, pos_fourier, vel_flat, t_start, is_surface], dim=2)
         point_feat = self.point_embed(x)
 
-        surf_idx, vol_idx = self._sample_supernodes(N, idcs_airfoil, device)
+        surf_idx, wake_idx, far_idx = self._sample_supernodes(pos, velocity_in, idcs_airfoil)
         N_s = self.num_surface_supernodes
-        N_v = self.num_volume_supernodes
+        N_w = self.num_wake_supernodes
+        N_f = self.num_far_supernodes
+        N_v = N_w + N_f
         M = N_s + N_v
 
         batch_range = torch.arange(B, device=device).unsqueeze(-1)
         surf_pos = pos[batch_range, surf_idx]
-        vol_pos = pos[batch_range, vol_idx]
-        super_pos = torch.cat([surf_pos, vol_pos], dim=1)
+        wake_pos = pos[batch_range, wake_idx]
+        far_pos = pos[batch_range, far_idx]
+        super_pos = torch.cat([surf_pos, wake_pos, far_pos], dim=1)
 
         super_pos_flat = super_pos.reshape(B * M, 3)
         pos_flat = pos.reshape(B * N, 3)
@@ -200,8 +232,9 @@ class ABUPT(Module):
         super_feat = messages.mean(dim=1).view(B, M, -1)
 
         type_ids = torch.cat([
-            torch.ones(N_s, device=device, dtype=torch.long),
-            torch.zeros(N_v, device=device, dtype=torch.long),
+            torch.full((N_s,), 2, device=device, dtype=torch.long),
+            torch.full((N_w,), 1, device=device, dtype=torch.long),
+            torch.full((N_f,), 0, device=device, dtype=torch.long),
         ])
         super_feat = super_feat + self.type_embed(type_ids).unsqueeze(0)
         super_feat = self.supernode_ln(super_feat)
