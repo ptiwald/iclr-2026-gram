@@ -8,8 +8,8 @@ lr_schedule: cosine
 min_lr: 0.0
 epochs: 400
 device: cuda
-checkpoint_dir: /workspace/checkpoints
-log_dir: /workspace/logs
+checkpoint_dir: /workspace/checkpoints_scan
+log_dir: /workspace/logs_scan
 max_steps: null
 bf16: true
 model_kwargs:
@@ -17,7 +17,7 @@ model_kwargs:
   num_surface_supernodes: 128
   num_wake_supernodes: 256
   num_far_supernodes: 128
-  wake_pool_frac: 0.15
+  wake_pool_frac: 0.2
   num_approx_blocks: 6
   num_heads: 4
   encoder_k: 8
