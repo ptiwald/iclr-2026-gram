@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import csv
 import importlib
 import os
@@ -25,7 +26,50 @@ DEFAULTS = {
     "lr_schedule": None,  # None or "cosine"
     "min_lr": 0.0,
     "model_kwargs": {},
+    # EMA: None disables; a float in (0,1) (e.g. 0.9999) enables. Shadow weights
+    # are used for eval + saved as the checkpoint.
+    "ema_decay": None,
+    "ema_warmup_steps": 1000,
 }
+
+
+class EMA:
+    """Maintain an exponential moving average of a model's state_dict.
+
+    Non-float tensors (e.g. integer buffers) are copied rather than averaged.
+    Decay is ramped up linearly so early steps don't get locked into noisy init:
+        effective_decay = min(decay, step / (step + warmup))
+    """
+
+    def __init__(self, model: torch.nn.Module, decay: float, warmup_steps: int = 1000):
+        self.decay = decay
+        self.warmup = max(1, warmup_steps)
+        self.step = 0
+        self.shadow = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model: torch.nn.Module) -> None:
+        self.step += 1
+        d = min(self.decay, self.step / (self.step + self.warmup))
+        for k, v in model.state_dict().items():
+            s = self.shadow[k]
+            if v.dtype.is_floating_point:
+                s.mul_(d).add_(v.detach(), alpha=1.0 - d)
+            else:
+                s.copy_(v)
+
+    def state_dict(self) -> dict:
+        return self.shadow
+
+    @contextlib.contextmanager
+    def swap(self, model: torch.nn.Module):
+        """Temporarily load EMA weights into `model`; restore on exit."""
+        backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        model.load_state_dict(self.shadow)
+        try:
+            yield
+        finally:
+            model.load_state_dict(backup)
 
 
 def load_config(path: str) -> dict:
@@ -41,7 +85,7 @@ def get_model_class(name: str):
     return getattr(module, name)
 
 
-def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, step_logger=None, bf16=False):
+def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, step_logger=None, bf16=False, ema=None):
     model.train()
     total_loss = 0.0
     n_batches = 0
@@ -68,6 +112,9 @@ def train_one_epoch(model, loader, optimizer, device, epoch, max_steps=None, ste
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        if ema is not None:
+            ema.update(model)
 
         loss_val = loss.item()
         total_loss += loss_val
@@ -141,6 +188,11 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
 
+    ema = None
+    if cfg["ema_decay"] is not None:
+        ema = EMA(model, decay=cfg["ema_decay"], warmup_steps=cfg["ema_warmup_steps"])
+        print(f"EMA: decay={cfg['ema_decay']} warmup_steps={cfg['ema_warmup_steps']}")
+
     scheduler = None
     if cfg["lr_schedule"] == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -159,7 +211,7 @@ def main():
     steps_writer = csv.writer(steps_file)
     epochs_writer = csv.writer(epochs_file)
     steps_writer.writerow(["epoch", "step_in_epoch", "train_loss"])
-    epochs_writer.writerow(["epoch", "train_loss", "test_loss", "time_s"])
+    epochs_writer.writerow(["epoch", "train_loss", "test_loss", "test_loss_raw", "time_s"])
     steps_file.flush()
     epochs_file.flush()
 
@@ -174,25 +226,40 @@ def main():
             t0 = time.time()
             train_loss = train_one_epoch(
                 model, loaders["train"], optimizer, cfg["device"], epoch,
-                max_steps=cfg["max_steps"], step_logger=log_step, bf16=cfg["bf16"],
+                max_steps=cfg["max_steps"], step_logger=log_step, bf16=cfg["bf16"], ema=ema,
             )
-            test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
+            if ema is not None:
+                test_loss_raw = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
+                with ema.swap(model):
+                    test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
+            else:
+                test_loss = evaluate(model, loaders["test"], cfg["device"], cfg["max_steps"], bf16=cfg["bf16"])
+                test_loss_raw = test_loss
             if scheduler is not None:
                 scheduler.step()
             elapsed = time.time() - t0
 
-            epochs_writer.writerow([epoch, f"{train_loss:.6f}", f"{test_loss:.6f}", f"{elapsed:.2f}"])
+            epochs_writer.writerow([
+                epoch, f"{train_loss:.6f}", f"{test_loss:.6f}",
+                f"{test_loss_raw:.6f}", f"{elapsed:.2f}",
+            ])
             epochs_file.flush()
 
-            print(f"Epoch {epoch:3d}/{cfg['epochs']} | "
-                  f"Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f} | "
-                  f"Time: {elapsed:.1f}s")
+            if ema is not None:
+                print(f"Epoch {epoch:3d}/{cfg['epochs']} | "
+                      f"Train loss: {train_loss:.4f} | Test loss (EMA): {test_loss:.4f} | "
+                      f"Test loss (raw): {test_loss_raw:.4f} | Time: {elapsed:.1f}s")
+            else:
+                print(f"Epoch {epoch:3d}/{cfg['epochs']} | "
+                      f"Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f} | "
+                      f"Time: {elapsed:.1f}s")
 
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
                 os.makedirs(cfg["checkpoint_dir"], exist_ok=True)
                 path = os.path.join(cfg["checkpoint_dir"], f"{model_tag}_best.pt")
-                torch.save(model.state_dict(), path)
+                sd = ema.state_dict() if ema is not None else model.state_dict()
+                torch.save(sd, path)
                 print(f"  -> Saved best checkpoint to {path}")
     finally:
         steps_file.close()
