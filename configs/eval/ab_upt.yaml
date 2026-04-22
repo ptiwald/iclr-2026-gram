@@ -3,10 +3,12 @@ checkpoint: /workspace/checkpoints/abupt_best.pt
 batch_size: 15
 bf16: true
 model_kwargs:
-  hidden: 256
+  hidden: 192
   num_surface_supernodes: 128
-  num_volume_supernodes: 384
-  num_approx_blocks: 8
+  num_wake_supernodes: 256
+  num_far_supernodes: 128
+  wake_pool_frac: 0.2
+  num_approx_blocks: 6
   num_heads: 4
   encoder_k: 8
   ffn_mult: 2
