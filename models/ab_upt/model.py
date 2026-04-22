@@ -52,6 +52,13 @@ class ABUPT(Module):
             "freqs",
             2.0 * math.pi * torch.tensor(self.FREQS, dtype=torch.float32),
         )
+        # Normalization buffers (identity defaults; overridden by norm_stats.pt if present,
+        # or by state_dict.pt, which stores the buffers used at training time).
+        self.register_buffer("pos_mean", torch.zeros(3))
+        self.register_buffer("pos_scale", torch.ones(3))
+        self.register_buffer("vel_mean", torch.zeros(3))
+        self.register_buffer("vel_std", torch.ones(3))
+
         # pos (3) + fourier (3*2*F=36) + velocity_in (15) + t_start (1) + is_surface (1)
         in_dim = 3 + 3 * 2 * len(self.FREQS) + 15 + 1 + 1
 
@@ -100,6 +107,12 @@ class ABUPT(Module):
             ReLU(),
             Linear(hidden, 15),
         )
+
+        stats_path = os.path.join(os.path.dirname(__file__), "norm_stats.pt")
+        if os.path.exists(stats_path):
+            stats = torch.load(stats_path, weights_only=True)
+            for key, val in stats.items():
+                getattr(self, key).copy_(val)
 
         path = os.path.join(os.path.dirname(__file__), "state_dict.pt")
         if os.path.exists(path):
@@ -179,6 +192,9 @@ class ABUPT(Module):
         B, T_in, N, _ = velocity_in.shape
         device = pos.device
 
+        pos = (pos - self.pos_mean) / self.pos_scale
+        velocity_in = (velocity_in - self.vel_mean) / self.vel_std
+
         vel_flat = velocity_in.transpose(1, 2).reshape(B, N, T_in * 3)
         t_start = t[:, 0:1].unsqueeze(1).expand(-1, N, -1)
         pos_fourier = self._fourier(pos)
@@ -256,6 +272,8 @@ class ABUPT(Module):
         delta = self.head(decoded).view(B, N, T_in, 3)
         last_frame = velocity_in[:, -1, :, :]
         out = last_frame.unsqueeze(2) + delta
+
+        out = out * self.vel_std + self.vel_mean
 
         for i, idcs in enumerate(idcs_airfoil):
             out[i, idcs] = 0.0
