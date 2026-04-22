@@ -13,4 +13,5 @@ model_kwargs:
   encoder_k: 8
   ffn_mult: 2
   cross_branch_every: 2
+  num_decoder_blocks: 2
 

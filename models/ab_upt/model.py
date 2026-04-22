@@ -34,6 +34,7 @@ class ABUPT(Module):
         encoder_k: int = 8,
         ffn_mult: int = 2,
         cross_branch_every: int = 2,
+        num_decoder_blocks: int = 1,
     ):
         super().__init__()
         assert hidden % num_heads == 0
@@ -88,7 +89,10 @@ class ABUPT(Module):
             for i in range(num_approx_blocks)
         ])
 
-        self.decoder = PerceiverDecoder(hidden=hidden, num_heads=num_heads, ffn_mult=ffn_mult)
+        self.decoder = PerceiverDecoder(
+            hidden=hidden, num_heads=num_heads, ffn_mult=ffn_mult,
+            num_blocks=num_decoder_blocks,
+        )
 
         self.head = Sequential(
             Linear(hidden, hidden),
@@ -327,8 +331,8 @@ class BranchedBlock(Module):
         return surf, vol
 
 
-class PerceiverDecoder(Module):
-    """N point queries cross-attend to M supernode latents. One cross-attn + FFN layer."""
+class DecoderBlock(Module):
+    """One Perceiver layer: queries cross-attend to latents, then FFN."""
 
     def __init__(self, hidden: int, num_heads: int, ffn_mult: int):
         super().__init__()
@@ -362,5 +366,19 @@ class PerceiverDecoder(Module):
         out = F.scaled_dot_product_attention(q, k, v)
         out = out.transpose(1, 2).reshape(B, N, H)
         out = queries + self.out_proj(out)
-        out = out + self.ffn(self.ln_ffn(out))
-        return out
+        return out + self.ffn(self.ln_ffn(out))
+
+
+class PerceiverDecoder(Module):
+    """Stack of N point-queries-cross-attend-to-M-latents blocks."""
+
+    def __init__(self, hidden: int, num_heads: int, ffn_mult: int, num_blocks: int = 1):
+        super().__init__()
+        self.blocks = ModuleList([
+            DecoderBlock(hidden, num_heads, ffn_mult) for _ in range(num_blocks)
+        ])
+
+    def forward(self, queries: torch.Tensor, latents: torch.Tensor) -> torch.Tensor:
+        for block in self.blocks:
+            queries = block(queries, latents)
+        return queries
