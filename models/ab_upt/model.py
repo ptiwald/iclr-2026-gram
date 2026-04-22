@@ -20,7 +20,7 @@ class ABUPT(Module):
       6. Head: per-point 5-step velocity deltas, added to last input frame, hard-masked at surface.
     """
 
-    FREQS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+    FREQS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
 
     def __init__(
         self,
