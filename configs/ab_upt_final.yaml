@@ -1,0 +1,26 @@
+model: ABUPT
+data_dir: /workspace/data/augmented_train_warped-ifw
+split_file: augmented_split.json
+batch_size: 8
+num_workers: 2
+lr: 5.0e-4
+lr_schedule: cosine
+min_lr: 0.0
+epochs: 400
+device: cuda
+checkpoint_dir: /workspace/checkpoints_scan
+log_dir: /workspace/logs_scan
+max_steps: null
+bf16: true
+model_kwargs:
+  hidden: 256
+  num_surface_supernodes: 192
+  num_wake_supernodes: 384
+  num_far_supernodes: 128
+  wake_pool_frac: 0.2
+  num_approx_blocks: 12
+  num_heads: 4
+  encoder_k: 16
+  ffn_mult: 2
+  cross_branch_every: 2
+  num_decoder_blocks: 2
