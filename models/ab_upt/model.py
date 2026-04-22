@@ -113,6 +113,12 @@ class ABUPT(Module):
             stats = torch.load(stats_path, weights_only=True)
             for key, val in stats.items():
                 getattr(self, key).copy_(val)
+            print(
+                f"[ABUPT] loaded norm_stats.pt: "
+                f"vel_mean={self.vel_mean.tolist()}, vel_std={self.vel_std.tolist()}"
+            )
+        else:
+            print(f"[ABUPT] norm_stats.pt not found — using identity normalization")
 
         path = os.path.join(os.path.dirname(__file__), "state_dict.pt")
         if os.path.exists(path):
