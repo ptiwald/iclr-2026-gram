@@ -124,6 +124,9 @@ class ABUPT(Module):
         if os.path.exists(path):
             self.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
 
+        if torch.cuda.is_available():
+            self.to("cuda")
+
     def _fourier(self, pos: torch.Tensor) -> torch.Tensor:
         angles = pos.unsqueeze(-1) * self.freqs
         feats = torch.stack([angles.sin(), angles.cos()], dim=-1)
