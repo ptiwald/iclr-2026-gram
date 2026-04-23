@@ -26,15 +26,15 @@ class ABUPT(Module):
         self,
         hidden: int = 192,
         num_surface_supernodes: int = 128,
-        num_wake_supernodes: int = 256,
+        num_wake_supernodes: int = 384,
         num_far_supernodes: int = 128,
         wake_pool_frac: float = 0.2,
-        num_approx_blocks: int = 6,
+        num_approx_blocks: int = 12,
         num_heads: int = 4,
-        encoder_k: int = 8,
+        encoder_k: int = 16,
         ffn_mult: int = 2,
         cross_branch_every: int = 2,
-        num_decoder_blocks: int = 1,
+        num_decoder_blocks: int = 2,
     ):
         super().__init__()
         assert hidden % num_heads == 0
@@ -110,7 +110,7 @@ class ABUPT(Module):
 
         stats_path = os.path.join(os.path.dirname(__file__), "norm_stats.pt")
         if os.path.exists(stats_path):
-            stats = torch.load(stats_path, weights_only=True)
+            stats = torch.load(stats_path, map_location="cpu", weights_only=True)
             for key, val in stats.items():
                 getattr(self, key).copy_(val)
             print(
@@ -122,7 +122,7 @@ class ABUPT(Module):
 
         path = os.path.join(os.path.dirname(__file__), "state_dict.pt")
         if os.path.exists(path):
-            self.load_state_dict(torch.load(path, weights_only=True))
+            self.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
 
     def _fourier(self, pos: torch.Tensor) -> torch.Tensor:
         angles = pos.unsqueeze(-1) * self.freqs
