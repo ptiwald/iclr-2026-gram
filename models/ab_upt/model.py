@@ -127,6 +127,9 @@ class ABUPT(Module):
         if torch.cuda.is_available():
             self.to("cuda")
 
+        # Ship in eval mode; train.py re-enters training via model.train().
+        self.eval()
+
     def _fourier(self, pos: torch.Tensor) -> torch.Tensor:
         angles = pos.unsqueeze(-1) * self.freqs
         feats = torch.stack([angles.sin(), angles.cos()], dim=-1)
@@ -199,10 +202,10 @@ class ABUPT(Module):
         velocity_in: torch.Tensor,
     ) -> torch.Tensor:
         # Trained under bf16 autocast; match that at inference to save memory
-        # and reproduce eval numerics. Nested autocast inside an outer caller
-        # context is a no-op, so this is safe either way.
+        # and reproduce eval numerics. inference_mode disables autograd bookkeeping
+        # so activations aren't retained when the caller forgets torch.no_grad().
         if not self.training:
-            with torch.autocast(device_type=pos.device.type, dtype=torch.bfloat16):
+            with torch.inference_mode(), torch.autocast(device_type=pos.device.type, dtype=torch.bfloat16):
                 return self._forward_impl(t, pos, idcs_airfoil, velocity_in)
         return self._forward_impl(t, pos, idcs_airfoil, velocity_in)
 
