@@ -19,7 +19,7 @@ class PTPointNet(Module):
     Per-point input: pos (3) + fourier(pos) (3 * 2 * F) + velocity_in (15) + t_start (1).
     """
 
-    FREQS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+    FREQS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
 
     def __init__(
         self,
@@ -45,6 +45,10 @@ class PTPointNet(Module):
             "freqs",
             2.0 * math.pi * torch.tensor(self.FREQS, dtype=torch.float32),
         )
+        self.register_buffer("pos_mean", torch.zeros(3))
+        self.register_buffer("pos_scale", torch.ones(3))
+        self.register_buffer("vel_mean", torch.zeros(3))
+        self.register_buffer("vel_std", torch.ones(3))
         in_dim = 3 + 3 * 2 * len(self.FREQS) + 15 + 1
 
         self.encoder = Sequential(
@@ -66,6 +70,18 @@ class PTPointNet(Module):
             ReLU(),
             Linear(2 * hidden, 15),
         )
+
+        stats_path = os.path.join(os.path.dirname(__file__), "norm_stats.pt")
+        if os.path.exists(stats_path):
+            stats = torch.load(stats_path, map_location="cpu", weights_only=True)
+            for key, val in stats.items():
+                getattr(self, key).copy_(val)
+            print(
+                f"[PTPointNet] loaded norm_stats.pt: "
+                f"vel_mean={self.vel_mean.tolist()}, vel_std={self.vel_std.tolist()}"
+            )
+        else:
+            print(f"[PTPointNet] norm_stats.pt not found — using identity normalization")
 
         path = os.path.join(os.path.dirname(__file__), "state_dict.pt")
         if os.path.exists(path):
@@ -90,6 +106,9 @@ class PTPointNet(Module):
         velocity_in: torch.Tensor,
     ) -> torch.Tensor:
         batch_size, num_t_in, num_pos, _ = velocity_in.shape
+
+        pos = (pos - self.pos_mean) / self.pos_scale
+        velocity_in = (velocity_in - self.vel_mean) / self.vel_std
 
         vel_flat = velocity_in.transpose(1, 2).reshape(batch_size, num_pos, num_t_in * 3)
         t_start = t[:, 0:1].unsqueeze(1).expand(-1, num_pos, -1)
@@ -125,6 +144,8 @@ class PTPointNet(Module):
         delta = self.decoder(combined).view(batch_size, num_pos, num_t_in, 3)
         last_frame = velocity_in[:, -1, :, :]
         out = last_frame.unsqueeze(2) + delta
+
+        out = out * self.vel_std + self.vel_mean
 
         for i, idcs in enumerate(idcs_airfoil):
             out[i, idcs] = 0.0
