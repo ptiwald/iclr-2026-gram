@@ -198,6 +198,21 @@ class ABUPT(Module):
         idcs_airfoil: list[torch.Tensor],
         velocity_in: torch.Tensor,
     ) -> torch.Tensor:
+        # Trained under bf16 autocast; match that at inference to save memory
+        # and reproduce eval numerics. Nested autocast inside an outer caller
+        # context is a no-op, so this is safe either way.
+        if not self.training:
+            with torch.autocast(device_type=pos.device.type, dtype=torch.bfloat16):
+                return self._forward_impl(t, pos, idcs_airfoil, velocity_in)
+        return self._forward_impl(t, pos, idcs_airfoil, velocity_in)
+
+    def _forward_impl(
+        self,
+        t: torch.Tensor,
+        pos: torch.Tensor,
+        idcs_airfoil: list[torch.Tensor],
+        velocity_in: torch.Tensor,
+    ) -> torch.Tensor:
         B, T_in, N, _ = velocity_in.shape
         device = pos.device
 
