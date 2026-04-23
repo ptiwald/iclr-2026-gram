@@ -1,0 +1,19 @@
+model: ABUPT
+checkpoint: /workspace/checkpoints/abupt_submission.pt
+data_dir: /workspace/data/augmented_train_warped-ifw
+split_file: augmented_split.json
+batch_size: 15
+bf16: true
+model_kwargs:
+  hidden: 192
+  num_surface_supernodes: 128
+  num_wake_supernodes: 384
+  num_far_supernodes: 128
+  wake_pool_frac: 0.2
+  num_approx_blocks: 12
+  num_heads: 4
+  encoder_k: 16
+  ffn_mult: 2
+  cross_branch_every: 2
+  num_decoder_blocks: 2
+
