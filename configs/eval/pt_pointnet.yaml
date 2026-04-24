@@ -1,4 +1,5 @@
 model: PTPointNet
 checkpoint: /workspace/checkpoints/ptpointnet_best.pt
+data_dir: /workspace/data/augmented_train_warped-ifw
 batch_size: 5
 bf16: True
