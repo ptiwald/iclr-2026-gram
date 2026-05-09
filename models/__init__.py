@@ -7,3 +7,4 @@ from .vanilla_pointnet import VanillaPointNet
 from .fourier_pointnet import FourierPointNet
 from .knn_pointnet import KNNPointNet
 from .voxel_baseline import VoxelBaseline
+from .voxel_unet import VoxelUNet
