@@ -1,0 +1,19 @@
+model: VoxelBaseline
+data_dir: /workspace/data/augmented_train_warped-ifw
+split_file: augmented_split.json
+batch_size: 4
+num_workers: 2
+lr: 5.0e-4
+lr_schedule: cosine
+min_lr: 0.0
+epochs: 150
+device: cuda
+checkpoint_dir: /workspace/checkpoints
+log_dir: /workspace/logs
+max_steps: null
+bf16: true
+ema_decay: 0.999
+ema_warmup_steps: 100
+model_kwargs:
+  hidden: 64
+  num_conv_blocks: 6
