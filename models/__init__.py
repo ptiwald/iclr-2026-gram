@@ -8,3 +8,4 @@ from .fourier_pointnet import FourierPointNet
 from .knn_pointnet import KNNPointNet
 from .voxel_baseline import VoxelBaseline
 from .voxel_unet import VoxelUNet
+from .voxel_unet_sdf import VoxelUNetSDF
