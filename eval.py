@@ -32,6 +32,20 @@ def get_model_class(name: str):
     return getattr(module, name)
 
 
+def _rel_l2_masked(pred: torch.Tensor, gt: torch.Tensor, mask_bn: torch.Tensor) -> torch.Tensor:
+    """Per-sample relative L2 over points selected by `mask_bn` (B, N).
+
+    Numerator = sum of squared errors over (T, selected N, 3); denominator
+    likewise over the targets. Returns (B,).
+    """
+    mask = mask_bn[:, None, :, None].to(pred.dtype)  # (B, 1, N, 1)
+    sq_err = (pred - gt) ** 2 * mask
+    sq_gt = gt ** 2 * mask
+    num = sq_err.sum(dim=(1, 2, 3))
+    denom = sq_gt.sum(dim=(1, 2, 3))
+    return (num / denom.clamp(min=1e-12)).sqrt()
+
+
 @torch.no_grad()
 def evaluate(model, loader, device, bf16=False):
     model.eval()
@@ -39,11 +53,16 @@ def evaluate(model, loader, device, bf16=False):
 
     autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
 
-    per_sample = []
-    batch_losses = []
+    # Per-sample metrics (concatenated across batches): mean ± std at the end.
+    metric_all, metric_wake, metric_rest = [], [], []
+    rel_l2_all, rel_l2_wake, rel_l2_rest = [], [], []
+    lf_rel_l2_all, lf_rel_l2_wake, lf_rel_l2_rest = [], [], []
+
+    # Per-batch scalars (averaged at the end): per-point L2 norm in each region.
     lf_all_sum, m_all_sum = 0.0, 0.0
     lf_wake_sum, lf_rest_sum = 0.0, 0.0
     m_wake_sum, m_rest_sum = 0.0, 0.0
+    val_loss_sum = 0.0
     n_batches = 0
 
     for batch in loader:
@@ -59,31 +78,62 @@ def evaluate(model, loader, device, bf16=False):
         pred = pred.float()
         lf_pred = lf_pred.float()
 
-        # main.py metric: per-sample L2 norm averaged over timesteps and points.
-        per_sample.append((pred - velocity_out).norm(dim=3).mean(dim=(1, 2)))
-        # train.py loss: mean L2 norm over the whole batch.
-        batch_losses.append((pred - velocity_out).norm(dim=-1).mean().item())
+        B, _, N, _ = velocity_out.shape
 
         # Wake/rest split: per-point error averaged over time, wake = top 10% by LastFrame.
         lf_pp = (lf_pred - velocity_out).norm(dim=-1).mean(dim=1)  # (B, N)
         m_pp = (pred - velocity_out).norm(dim=-1).mean(dim=1)      # (B, N)
-        k = int(round(0.1 * lf_pp.shape[1]))
+        k = int(round(0.1 * N))
         thresh = lf_pp.topk(k, dim=1).values[:, -1:]
-        wake = lf_pp >= thresh
-        rest = ~wake
+        wake = lf_pp >= thresh           # (B, N) bool
+        rest = ~wake                     # (B, N) bool
+        all_mask = torch.ones_like(wake)
 
+        # Organizer's per-sample relative L2 metric, restricted to each region.
+        rel_l2_all.append(_rel_l2_masked(pred, velocity_out, all_mask))
+        rel_l2_wake.append(_rel_l2_masked(pred, velocity_out, wake))
+        rel_l2_rest.append(_rel_l2_masked(pred, velocity_out, rest))
+        lf_rel_l2_all.append(_rel_l2_masked(lf_pred, velocity_out, all_mask))
+        lf_rel_l2_wake.append(_rel_l2_masked(lf_pred, velocity_out, wake))
+        lf_rel_l2_rest.append(_rel_l2_masked(lf_pred, velocity_out, rest))
+
+        # Per-sample per-point L2 norm (mean over T and points), restricted to each region.
+        # `m_pp` and `lf_pp` are already (B, N) per-point errors averaged over T.
+        def _masked_per_sample_mean(pp: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
+            # pp: (B, N), m: (B, N) bool. Returns (B,) per-sample mean over m.
+            mf = m.to(pp.dtype)
+            return (pp * mf).sum(dim=1) / mf.sum(dim=1).clamp(min=1.0)
+
+        metric_all.append(_masked_per_sample_mean(m_pp, all_mask))
+        metric_wake.append(_masked_per_sample_mean(m_pp, wake))
+        metric_rest.append(_masked_per_sample_mean(m_pp, rest))
+
+        # Per-batch scalars (kept for readability; equivalent to means of the per-sample tensors).
         lf_all_sum += lf_pp.mean().item()
         m_all_sum += m_pp.mean().item()
         lf_wake_sum += lf_pp[wake].mean().item()
         lf_rest_sum += lf_pp[rest].mean().item()
         m_wake_sum += m_pp[wake].mean().item()
         m_rest_sum += m_pp[rest].mean().item()
+
+        # train.py loss: mean L2 norm over the whole batch (no region split).
+        val_loss_sum += (pred - velocity_out).norm(dim=-1).mean().item()
         n_batches += 1
 
     n = n_batches
     return {
-        "metric": torch.cat(per_sample),
-        "val_loss": sum(batch_losses) / n,
+        # Concatenated per-sample tensors (mean ± std reported at print time).
+        "metric_all": torch.cat(metric_all),
+        "metric_wake": torch.cat(metric_wake),
+        "metric_rest": torch.cat(metric_rest),
+        "rel_l2_all": torch.cat(rel_l2_all),
+        "rel_l2_wake": torch.cat(rel_l2_wake),
+        "rel_l2_rest": torch.cat(rel_l2_rest),
+        "lf_rel_l2_all": torch.cat(lf_rel_l2_all),
+        "lf_rel_l2_wake": torch.cat(lf_rel_l2_wake),
+        "lf_rel_l2_rest": torch.cat(lf_rel_l2_rest),
+        # Per-batch averages for the per-point L2 norm summary (kept for compat with prior format).
+        "val_loss": val_loss_sum / n,
         "lf_all": lf_all_sum / n,
         "m_all": m_all_sum / n,
         "lf_wake": lf_wake_sum / n,
@@ -91,6 +141,16 @@ def evaluate(model, loader, device, bf16=False):
         "m_wake": m_wake_sum / n,
         "m_rest": m_rest_sum / n,
     }
+
+
+def _row(label: str, *vals: torch.Tensor | float, fmt: str = "{:.4f}") -> str:
+    cells = [f"{label:<20}"]
+    for v in vals:
+        if isinstance(v, torch.Tensor):
+            cells.append(f"{fmt.format(v.mean().item()):>12}")
+        else:
+            cells.append(f"{fmt.format(v):>12}")
+    return " ".join(cells)
 
 
 def main(cfg):
@@ -116,13 +176,22 @@ def main(cfg):
           + (f" | Checkpoint: {cfg['checkpoint']}" if cfg["checkpoint"] else ""))
 
     r = evaluate(model, loader, cfg["device"], bf16=cfg["bf16"])
-    print(f"Metric: {r['metric'].mean():.4f} +- {r['metric'].std():.4f}")
     print(f"Val loss (train.py-style): {r['val_loss']:.4f}")
     print()
+
     print("Wake = top 10% of points per sample by LastFrame per-point L2 error.")
-    print(f"{'Model':<20} {'All':>10} {'Wake (10%)':>12} {'Rest (90%)':>12}")
-    print(f"{'LastFrame':<20} {r['lf_all']:>10.4f} {r['lf_wake']:>12.4f} {r['lf_rest']:>12.4f}")
-    print(f"{cfg['model']:<20} {r['m_all']:>10.4f} {r['m_wake']:>12.4f} {r['m_rest']:>12.4f}")
+    header = f"{'Model':<20} {'All':>12} {'Wake (10%)':>12} {'Rest (90%)':>12}"
+
+    print("Rel-L2 (leaderboard metric, per-sample, mean over batch):")
+    print(header)
+    print(_row("LastFrame", r["lf_rel_l2_all"], r["lf_rel_l2_wake"], r["lf_rel_l2_rest"]))
+    print(_row(cfg["model"], r["rel_l2_all"], r["rel_l2_wake"], r["rel_l2_rest"]))
+    print()
+
+    print("Per-point L2 norm (mean across points and time, mean over batch):")
+    print(header)
+    print(_row("LastFrame", r["lf_all"], r["lf_wake"], r["lf_rest"]))
+    print(_row(cfg["model"], r["m_all"], r["m_wake"], r["m_rest"]))
 
 
 if __name__ == "__main__":

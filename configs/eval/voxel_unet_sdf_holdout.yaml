@@ -1,0 +1,8 @@
+model: VoxelUNetSDF
+checkpoint: /workspace/checkpoints/voxelunetsdf_best.pt
+data_dir: /workspace/data/warped-ifw-test-set
+split_file: holdout_split.json
+batch_size: 15
+bf16: true
+model_kwargs:
+  hidden: 64
