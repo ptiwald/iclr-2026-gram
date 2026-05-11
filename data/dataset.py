@@ -131,6 +131,8 @@ def make_dataloaders(
 
     loaders = {}
     for name, filenames in split.items():
+        if not filenames:
+            continue
         paths = [os.path.join(data_dir, fn) for fn in filenames]
         dataset = WarpedIFWDataset(paths)
         loaders[name] = DataLoader(

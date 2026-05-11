@@ -1,5 +1,5 @@
 model: ABUPT
-checkpoint: /workspace/checkpoints/abupt_best.pt
+checkpoint: /workspace/checkpoints/abupt_submission.pt
 data_dir: /workspace/data/warped-ifw-test-set
 split_file: holdout_split.json
 batch_size: 15
