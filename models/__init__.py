@@ -9,3 +9,5 @@ from .knn_pointnet import KNNPointNet
 from .voxel_baseline import VoxelBaseline
 from .voxel_unet import VoxelUNet
 from .voxel_unet_sdf import VoxelUNetSDF
+from .resmlp_no_unet import ResMLPNoUNet
+from .resmlp_min import ResMLPMin
