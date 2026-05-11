@@ -81,20 +81,21 @@ class ResMLPNoUNet(nn.Module):
         self.norm_out = nn.LayerNorm(hidden)
         self.proj_out = nn.Linear(hidden, T_OUT * 3)
 
-        self.register_buffer("vel_mean", torch.zeros(1, 1, 1, 3))
-        self.register_buffer("vel_std", torch.ones(1, 1, 1, 3))
+        self.register_buffer("vel_mean", torch.zeros(3))
+        self.register_buffer("vel_std", torch.ones(3))
         self.register_buffer("domain_min", torch.tensor(DOMAIN_MIN).view(1, 1, 3))
         self.register_buffer("domain_max", torch.tensor(DOMAIN_MAX).view(1, 1, 3))
 
         stats_path = os.path.join(os.path.dirname(__file__), "norm_stats.pt")
         if os.path.exists(stats_path):
             stats = torch.load(stats_path, map_location="cpu", weights_only=True)
+            known = {"vel_mean", "vel_std"}
             for k, v in stats.items():
-                getattr(self, k).copy_(v)
+                if k in known:
+                    getattr(self, k).copy_(v)
             print(
                 f"[ResMLPNoUNet] loaded norm_stats.pt: "
-                f"vel_mean={self.vel_mean.flatten().tolist()}, "
-                f"vel_std={self.vel_std.flatten().tolist()}"
+                f"vel_mean={self.vel_mean.tolist()}, vel_std={self.vel_std.tolist()}"
             )
         else:
             print("[ResMLPNoUNet] norm_stats.pt not found — using identity normalization")
