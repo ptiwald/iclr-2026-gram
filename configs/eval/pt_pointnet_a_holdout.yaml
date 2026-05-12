@@ -1,0 +1,15 @@
+model: PTPointNetA
+checkpoint: /workspace/checkpoints/ptpointneta_best.pt
+data_dir: /workspace/data/warped-ifw-test-set
+split_file: holdout_split.json
+batch_size: 5
+bf16: true
+model_kwargs:
+  num_blocks: 2
+  k: 16
+  hidden: 128
+  num_heads: 4
+  ffn_mult: 2
+  grid: [64, 32, 32]
+  ch_base: 64
+  use_checkpoint: false

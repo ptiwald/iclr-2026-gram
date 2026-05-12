@@ -3,6 +3,7 @@ from .linear_extrapolation import LinearExtrapolation
 from .mlp import MLP
 from .ab_upt import ABUPT
 from .pt_pointnet import PTPointNet
+from .pt_pointnet_a import PTPointNetA
 from .vanilla_pointnet import VanillaPointNet
 from .fourier_pointnet import FourierPointNet
 from .knn_pointnet import KNNPointNet
