@@ -1,0 +1,15 @@
+{
+  "vr_x_extent_per_box_x_mean": 0.6184651255607605,
+  "vr_x_extent_per_box_x_std": 0.13399311900138855,
+  "vr_x_extent_per_chord_mean": 1.1456924676895142,
+  "vr_x_extent_per_chord_std": 0.3213116526603699,
+  "vr_downstream_reach_mean": 0.09169406670111196,
+  "vr_downstream_reach_std": 0.2398362392493095,
+  "vr_downstream_reach_in_chords_mean": 0.16428564346909005,
+  "vr_downstream_reach_in_chords_std": 0.3529379203349537,
+  "iou_p90_mean": 0.82089092127165,
+  "iou_p90_std": 0.08284350430513217,
+  "n_samples": 810,
+  "n_distinct_sims": 22,
+  "n_distinct_geoms": 162
+}
