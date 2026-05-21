@@ -2,7 +2,7 @@ model: ResMLPMin
 run_name: resmlpmin_baseline
 data_dir: /workspace/data/augmented_train_warped-ifw
 split_file: augmented_split.json
-batch_size: 16
+batch_size: 8
 num_workers: 8
 lr: 5.0e-4
 lr_schedule: cosine
