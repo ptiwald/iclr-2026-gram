@@ -1,5 +1,5 @@
 model: ResMLPMin
-checkpoint: /workspace/checkpoints/resmlpmin_baseline_best.pt
+checkpoint: /workspace/checkpoints/resmlpmin_low_rf_best.pt
 data_dir: /workspace/data/warped-ifw-test-set
 split_file: holdout_split.json
 batch_size: 15
@@ -10,4 +10,4 @@ model_kwargs:
   num_post: 4
   grid: [64, 32, 32]
   ch_base: 64
-  num_levels: 3
+  num_levels: 2

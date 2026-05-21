@@ -69,19 +69,34 @@ class _DoubleConv(nn.Module):
 
 
 class _VoxelUNetSidecar(nn.Module):
-    """Voxelize (scatter-mean) → 3-level 3D U-Net → devoxelize (grid_sample).
+    """Voxelize (scatter-mean) → N-level 3D U-Net → devoxelize (grid_sample).
 
-    Width-preserving: input and output channels both equal `hidden`.
+    Width-preserving: input and output channels both equal `hidden`. Level `i`
+    (0 = finest) has `ch_base * 2**i` channels; the bottleneck is level
+    `num_levels - 1`.
     """
 
-    def __init__(self, hidden: int, grid: tuple[int, int, int], ch_base: int):
+    def __init__(self, hidden: int, grid: tuple[int, int, int], ch_base: int, num_levels: int = 3):
         super().__init__()
+        if num_levels < 1:
+            raise ValueError(f"num_levels must be >= 1, got {num_levels}")
         self.grid = tuple(int(v) for v in grid)
-        self.enc1 = _DoubleConv(hidden, ch_base)
-        self.enc2 = _DoubleConv(ch_base, ch_base * 2)
-        self.enc3 = _DoubleConv(ch_base * 2, ch_base * 4)
-        self.dec2 = _DoubleConv(ch_base * 4 + ch_base * 2, ch_base * 2)
-        self.dec1 = _DoubleConv(ch_base * 2 + ch_base, ch_base)
+        self.num_levels = int(num_levels)
+
+        encoders = []
+        for i in range(self.num_levels):
+            c_in = hidden if i == 0 else ch_base * (2 ** (i - 1))
+            c_out = ch_base * (2 ** i)
+            encoders.append(_DoubleConv(c_in, c_out))
+        self.encoders = nn.ModuleList(encoders)
+
+        decoders = []
+        for i in range(self.num_levels - 1):
+            c_skip = ch_base * (2 ** i)
+            c_up = ch_base * (2 ** (i + 1))
+            decoders.append(_DoubleConv(c_up + c_skip, c_skip))
+        self.decoders = nn.ModuleList(decoders)
+
         self.out = nn.Conv3d(ch_base, hidden, 1)
         self.pool = nn.MaxPool3d(2)
 
@@ -116,14 +131,15 @@ class _VoxelUNetSidecar(nn.Module):
 
     def forward(self, x: torch.Tensor, pos01: torch.Tensor) -> torch.Tensor:
         v0 = self._voxelize(x, pos01)
-        e1 = self.enc1(v0)
-        e2 = self.enc2(self.pool(e1))
-        e3 = self.enc3(self.pool(e2))
-        u2 = F.interpolate(e3, size=e2.shape[-3:], mode="trilinear", align_corners=False)
-        d2 = self.dec2(torch.cat([u2, e2], dim=1))
-        u1 = F.interpolate(d2, size=e1.shape[-3:], mode="trilinear", align_corners=False)
-        d1 = self.dec1(torch.cat([u1, e1], dim=1))
-        return self._devoxelize(self.out(d1), pos01)
+        skips = [self.encoders[0](v0)]
+        for i in range(1, self.num_levels):
+            skips.append(self.encoders[i](self.pool(skips[-1])))
+
+        d = skips[-1]
+        for i in range(self.num_levels - 2, -1, -1):
+            u = F.interpolate(d, size=skips[i].shape[-3:], mode="trilinear", align_corners=False)
+            d = self.decoders[i](torch.cat([u, skips[i]], dim=1))
+        return self._devoxelize(self.out(d), pos01)
 
 
 class ResMLPMin(nn.Module):
@@ -135,6 +151,7 @@ class ResMLPMin(nn.Module):
         num_post: int = 4,
         grid: tuple[int, int, int] = (64, 32, 32),
         ch_base: int = 64,
+        num_levels: int = 3,
         num_pos_freqs: int = 10,
         num_vel_freqs: int = 3,
         num_dist_freqs: int = 6,
@@ -153,7 +170,7 @@ class ResMLPMin(nn.Module):
 
         self.proj_in = nn.Linear(in_dim, hidden)
         self.blocks_pre = nn.ModuleList([_ResMLPBlock(hidden) for _ in range(num_pre)])
-        self.unet = _VoxelUNetSidecar(hidden=hidden, grid=grid, ch_base=ch_base)
+        self.unet = _VoxelUNetSidecar(hidden=hidden, grid=grid, ch_base=ch_base, num_levels=num_levels)
         self.blocks_post = nn.ModuleList([_ResMLPBlock(hidden) for _ in range(num_post)])
         self.norm_out = nn.LayerNorm(hidden)
         self.proj_out = nn.Linear(hidden, T_OUT * 3)

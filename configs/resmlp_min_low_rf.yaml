@@ -1,5 +1,5 @@
 model: ResMLPMin
-run_name: resmlpmin_baseline
+run_name: resmlpmin_low_rf
 data_dir: /workspace/data/augmented_train_warped-ifw
 split_file: augmented_split.json
 batch_size: 16
@@ -21,4 +21,4 @@ model_kwargs:
   num_post: 4
   grid: [64, 32, 32]
   ch_base: 64
-  num_levels: 3
+  num_levels: 2

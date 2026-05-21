@@ -203,7 +203,7 @@ def main():
 
     # Loss logging — persistent file handles, flushed per write for live tailing
     os.makedirs(cfg["log_dir"], exist_ok=True)
-    model_tag = cfg["model"].lower()
+    model_tag = cfg.get("run_name", cfg["model"].lower())
     steps_path = os.path.join(cfg["log_dir"], f"{model_tag}_steps.csv")
     epochs_path = os.path.join(cfg["log_dir"], f"{model_tag}_epochs.csv")
     steps_file = open(steps_path, "w", newline="")
