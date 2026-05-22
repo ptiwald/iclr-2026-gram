@@ -1,11 +1,31 @@
 import importlib
 import sys
 
+import numpy as np
 import torch
 import yaml
+from scipy.spatial import cKDTree
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 from data import make_dataloaders
 from models import LastFrame
+
+AIRFOIL_CLUSTER_EPS = 0.02
+AIRFOIL_CLUSTER_MIN_SIZE = 5
+
+
+def count_airfoils(pos: np.ndarray, idcs: np.ndarray) -> int:
+    pts = pos[idcs]
+    if len(pts) < AIRFOIL_CLUSTER_MIN_SIZE:
+        return 1
+    pairs = cKDTree(pts).query_pairs(AIRFOIL_CLUSTER_EPS, output_type="ndarray")
+    n = len(pts)
+    if len(pairs) == 0:
+        return n
+    A = csr_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(n, n))
+    _, labels = connected_components(A + A.T, directed=False)
+    return int((np.bincount(labels) >= AIRFOIL_CLUSTER_MIN_SIZE).sum())
 
 DEFAULTS = {
     "model": "MLP",
@@ -57,6 +77,7 @@ def evaluate(model, loader, device, bf16=False):
     metric_all, metric_wake, metric_rest = [], [], []
     rel_l2_all, rel_l2_wake, rel_l2_rest = [], [], []
     lf_rel_l2_all, lf_rel_l2_wake, lf_rel_l2_rest = [], [], []
+    n_airfoils_per_sample: list[int] = []
 
     # Per-batch scalars (averaged at the end): per-point L2 norm in each region.
     lf_all_sum, m_all_sum = 0.0, 0.0
@@ -71,6 +92,10 @@ def evaluate(model, loader, device, bf16=False):
         idcs_airfoil = [idx.to(device) for idx in batch["idcs_airfoil"]]
         velocity_in = batch["velocity_in"].to(device)
         velocity_out = batch["velocity_out"].to(device)
+
+        pos_np = batch["pos"].numpy()
+        for b_idx, idx_t in enumerate(batch["idcs_airfoil"]):
+            n_airfoils_per_sample.append(count_airfoils(pos_np[b_idx], idx_t.numpy()))
 
         with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=bf16):
             pred = model(t, pos, idcs_airfoil, velocity_in)
@@ -132,6 +157,7 @@ def evaluate(model, loader, device, bf16=False):
         "lf_rel_l2_all": torch.cat(lf_rel_l2_all),
         "lf_rel_l2_wake": torch.cat(lf_rel_l2_wake),
         "lf_rel_l2_rest": torch.cat(lf_rel_l2_rest),
+        "n_airfoils": torch.tensor(n_airfoils_per_sample, dtype=torch.int64),
         # Per-batch averages for the per-point L2 norm summary (kept for compat with prior format).
         "val_loss": val_loss_sum / n,
         "lf_all": lf_all_sum / n,
@@ -192,6 +218,26 @@ def main(cfg):
     print(header)
     print(_row("LastFrame", r["lf_all"], r["lf_wake"], r["lf_rest"]))
     print(_row(cfg["model"], r["m_all"], r["m_wake"], r["m_rest"]))
+    print()
+
+    # Per-airfoil-count subgroup breakdown (Rel-L2).
+    n_af = r["n_airfoils"]
+    print("Rel-L2 by airfoil count (per-sample mean ± std; n = sample count):")
+    sub_header = f"{'Subgroup':<20} {'n':>6} {'All':>12} {'Wake (10%)':>12} {'Rest (90%)':>12}"
+    print(sub_header)
+    for k in sorted(set(n_af.tolist())):
+        mask = n_af == k
+        n_k = int(mask.sum())
+        a = r["rel_l2_all"][mask]
+        w = r["rel_l2_wake"][mask]
+        rr = r["rel_l2_rest"][mask]
+        line = (
+            f"{f'{k}af':<20} {n_k:>6} "
+            f"{a.mean().item():>6.4f}±{a.std().item():.4f} "
+            f"{w.mean().item():>6.4f}±{w.std().item():.4f} "
+            f"{rr.mean().item():>6.4f}±{rr.std().item():.4f}"
+        )
+        print(line)
 
 
 if __name__ == "__main__":
