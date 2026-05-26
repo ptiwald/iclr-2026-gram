@@ -184,6 +184,30 @@ So there are two viable routes to chord-scale coverage on this problem:
 
 A small trunk with no sidecar (e.g. 2-block k=16 KNN by itself) would lose — its 1 %-chord reach falls far short of where the high-variance region lives.
 
+## Empirical ablation: resolution vs. receptive field (voxel-ladder runs)
+
+The analysis above predicts that a ≈ 1-chord receptive field is needed to cover the high-variance region. That prediction can be tested directly by varying the U-Net's depth (which controls RF at fixed grid resolution) and grid resolution (which controls voxel size at fixed depth) independently. Five `ResMLPMin` variants were trained from scratch, identical except for the sidecar's `grid` and `num_levels`:
+
+| variant   | grid       | levels | RF (vox) | x-coverage | U-Net params | params | rel-L2 (all) | wake   | rest   |
+|-----------|------------|-------:|---------:|-----------:|-------------:|-------:|-------------:|-------:|-------:|
+| min-RF    | 64×32×32   | 1      | ~5       | 8 %        | 0.57 M       | 2.18 M | 0.0658       | 0.2206 | 0.0297 |
+| low-RF    | 64×32×32   | 2      | ~17      | 27 %       | ~1.6 M       | 3.29 M | 0.0641       | 0.2163 | 0.0281 |
+| baseline  | 64×32×32   | 3      | ~41      | 64 %       | ~6.0 M       | 7.72 M | 0.0632       | 0.2135 | 0.0277 |
+| low-res   | 32×16×16   | 2      | ~17      | 53 %       | ~1.6 M       | 3.29 M | 0.0738       | 0.2493 | 0.0322 |
+| high-res  | 128×64×64  | 3      | ~41      | 32 %       | ~6.0 M       | 7.72 M | **0.0527**   | 0.1794 | 0.0225 |
+
+(`x-coverage` = RF × voxel size / domain x-span. `low-res` was trained at `batch_size=8`, `high-res` at `batch_size=4` due to memory; the others at `batch_size=8`. See `scratch/resolutionXreach_ablation.txt` for full eval output and per-subgroup numbers.)
+
+Reading along the two axes:
+
+- **Receptive field is over-provisioned.** Going from 41 → 17 voxels of RF (baseline → low-RF) costs only 0.0009 rel-L2 (within run-to-run noise), despite a 2.4× cut in RF and a 2.3× cut in U-Net parameters. Cutting all the way to RF ≈ 5 voxels (min-RF) costs 0.0026 — small, and confounded with a 3.5× parameter cut. The model does not need to "see" a full chord through the U-Net hierarchy to do well: ≈ ¼-chord of streamwise reach is already saturating.
+- **Resolution dominates.** Halving the grid at matched RF (low-RF → low-res, same parameter count) costs 0.0097 — an order of magnitude more than the RF ablation. Doubling the grid (baseline → high-res, same parameter count, same number of levels) wins another 0.0105 — the largest single move in this study. The resolution curve is roughly log-symmetric around the baseline (−14 % from halving, −17 % from doubling) and is **still rising at 128×64×64**.
+- **Subgroup pattern is uniform.** Per-airfoil-count subgroups (1af/2af/3af) move in lockstep with the headline rel-L2 across all five variants (see `scratch/resolutionXreach_ablation.txt`), so the resolution gain is not coming from one geometry class; it is a global sharpening of the velocity field.
+
+This refines the receptive-field section above. The "≈ 1 chord" coverage requirement derived from the variance bbox is an *upper bound* on what helps — empirically the model saturates at considerably less RF, and the marginal training budget is better spent on voxel resolution than on deeper U-Net hierarchies. A useful mental model: the U-Net's job here is less "communicate across the chord" and more "represent the airfoil-adjacent slab at high spatial fidelity," which is consistent with the variance maps showing the hot core is a thin rim on the airfoil surface, not a long downstream tail.
+
+Open caveat: `high-res` was trained at `batch_size=4` while the other four ran at `batch_size=8`, so its win is partially confounded with batch size. A `batch_size=4` baseline rerun would isolate the resolution effect cleanly.
+
 ## Files produced
 
 - `report.md` (this file)
