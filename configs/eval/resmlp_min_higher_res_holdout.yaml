@@ -1,0 +1,13 @@
+model: ResMLPMin
+checkpoint: /workspace/checkpoints/resmlpmin_higher_res_best.pt
+data_dir: /workspace/data/warped-ifw-test-set
+split_file: holdout_split.json
+batch_size: 5
+bf16: true
+model_kwargs:
+  hidden: 256
+  num_pre: 2
+  num_post: 4
+  grid: [256, 128, 128]
+  ch_base: 64
+  num_levels: 4
