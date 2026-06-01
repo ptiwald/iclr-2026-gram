@@ -248,16 +248,22 @@ _LAYERS = {"graph_transformer": _GraphTransformerLayer, "gat": _GATLayer}
 class _Level(nn.Module):
     """One hierarchy level: a shared edge encoder + a stack of graph layers."""
 
-    def __init__(self, hidden: int, heads: int, blocks: int, backbone: str):
+    def __init__(self, hidden: int, heads: int, blocks: int, backbone: str, use_checkpoint: bool = False):
         super().__init__()
         layer_cls = _LAYERS[backbone]
         self.edge_enc = _EdgeEncoder(hidden)
         self.layers = nn.ModuleList([layer_cls(hidden, heads, edge_dim=hidden) for _ in range(blocks)])
+        self.use_checkpoint = use_checkpoint
 
     def forward(self, x: torch.Tensor, neighbors: torch.Tensor, rel_pos: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
         edge_feat = self.edge_enc(rel_pos, dist)
         for layer in self.layers:
-            x = layer(x, neighbors, edge_feat)
+            # Checkpoint per layer (not per level): each layer's (N, k, D) gathers
+            # are recomputed alone in backward, so peak memory is one layer's worth.
+            if self.use_checkpoint and self.training:
+                x = checkpoint(layer, x, neighbors, edge_feat, use_reentrant=False)
+            else:
+                x = layer(x, neighbors, edge_feat)
         return x
 
 
@@ -339,10 +345,10 @@ class GraphUNet(nn.Module):
         )
 
         self.enc_levels = nn.ModuleList(
-            [_Level(hidden, heads, blocks_per_level, backbone) for _ in range(num_levels)]
+            [_Level(hidden, heads, blocks_per_level, backbone, use_checkpoint) for _ in range(num_levels)]
         )
         self.dec_levels = nn.ModuleList(
-            [_Level(hidden, heads, blocks_per_level, backbone) for _ in range(num_levels - 1)]
+            [_Level(hidden, heads, blocks_per_level, backbone, use_checkpoint) for _ in range(num_levels - 1)]
         )
         self.fuse = nn.ModuleList(
             [nn.Linear(2 * hidden, hidden) for _ in range(num_levels - 1)]
@@ -376,11 +382,6 @@ class GraphUNet(nn.Module):
             self.load_state_dict(torch.load(path, weights_only=True))
 
     # ------------------------------------------------------------------
-
-    def _run_level(self, level: _Level, x, neighbors, rel_pos, dist):
-        if self.use_checkpoint and self.training:
-            return checkpoint(level, x, neighbors, rel_pos, dist, use_reentrant=False)
-        return level(x, neighbors, rel_pos, dist)
 
     def _features(self, pos: torch.Tensor, vel_in: torch.Tensor, airfoil_idx: torch.Tensor) -> torch.Tensor:
         vel_norm = (vel_in - self.vel_mean) / self.vel_std          # (T, N, 3)
@@ -422,7 +423,7 @@ class GraphUNet(nn.Module):
                 sel = _boundary_aware_pool(p, target, air.nonzero(as_tuple=False).flatten())
                 p, x, air = p[sel], x[sel], air[sel]
             neighbors, rel_pos, dist = _knn_graph(p, self.k)
-            x = self._run_level(self.enc_levels[i], x, neighbors, rel_pos, dist)
+            x = self.enc_levels[i](x, neighbors, rel_pos, dist)
             if i < self.num_levels - 1:
                 skips_h.append(x)
                 skips_pos.append(p)
@@ -433,7 +434,7 @@ class GraphUNet(nn.Module):
             x = self.fuse[i](torch.cat([x_up, skips_h[i]], dim=-1))
             p = skips_pos[i]
             neighbors, rel_pos, dist = _knn_graph(p, self.k)
-            x = self._run_level(self.dec_levels[i], x, neighbors, rel_pos, dist)
+            x = self.dec_levels[i](x, neighbors, rel_pos, dist)
 
         # ---- temporal head + residual-delta + no-slip ----
         xt = self.temporal(x)                                       # (N, T_out, H)
