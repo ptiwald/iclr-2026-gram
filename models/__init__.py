@@ -13,3 +13,4 @@ from .voxel_unet_sdf import VoxelUNetSDF
 from .resmlp_no_unet import ResMLPNoUNet
 from .resmlp_min import ResMLPMin
 from .resmlp_min_wide import ResMLPMinWide
+from .graph_unet import GraphUNet
