@@ -1,5 +1,5 @@
 model: ResMLPMin
-checkpoint: /workspace/checkpoints/resmlpmin_baseline_best.pt
+checkpoint: /workspace/checkpoints/resmlpmin_baseline_bs3_best.pt
 data_dir: /workspace/data/warped-ifw-test-set
 split_file: holdout_split.json
 batch_size: 15
