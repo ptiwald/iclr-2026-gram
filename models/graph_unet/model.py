@@ -1,21 +1,28 @@
-"""Graph-U-Net: a configurable graph-transformer trunk with an optional
-graph-native multiscale hierarchy (pool / unpool + concat skips).
+"""Graph-U-Net: a lightweight, configurable graph-transformer trunk with an
+optional graph-native multiscale hierarchy (pool / unpool + skip connections).
 
-`num_levels=1` collapses to a flat full-resolution graph-transformer trunk — a
-faithful single-member of the 6th-place EnsembleSpatioTemporalModels backbone
-(`graph_transformer`), fed ResMLPMin's feature set. `num_levels>1` switches on a
-Graph-U-Net: each encoder level coarsens the point cloud with a boundary-aware
-pooler, the bottleneck does the long-range reach cheaply on few nodes, and the
-decoder interpolates back up, concatenating skip connections so fine structure is
-never blurred away before the head reads it.
+This is a from-scratch, narrow-and-deep design tuned for *tunability by design*:
+the graph-transformer block is **pre-LN** (`x = x + sublayer(LN(x))`), so it trains
+stably at depth without LR warmup or any change to the training recipe — unlike a
+post-LN stack, which needs warmup to avoid an early loss stall. Depth is the only
+reach mechanism in a flat k-NN GNN, so the baseline is set deep enough to cover the
+reach the receptive-field analysis showed is sufficient (~8% of the x-span ≈ 0.13
+chord, reached at k=16, L≈8 — see analyze/receptive_field_physics/report.md).
 
-Tests whether a *graph-native* hierarchy (no voxel grid anywhere) reaches
-ResMLPMin's holdout floor (~0.0632) — the port of the trunk+sidecar recipe to the
-graph domain promised in the LinkedIn writeup.
+One class, three regimes for clean ablation:
+  - `num_levels=1`                        -> flat baseline (reach via depth only)
+  - `num_levels>1, pool_ratio=1.0`        -> flat + skips (multi-depth features,
+                                             SAME reach as flat — no coarsening)
+  - `num_levels>1, pool_ratio<1.0`        -> Graph-U-Net (pooling buys reach cheaply,
+                                             skips preserve fine structure)
 
-The graph-transformer layer, edge encoder, temporal head, and boundary-aware
-pooler are vendored from `silentkernel3/iclr-2026` (branch
-`submission/spatiotemporal-gnn`) so this directory stays self-contained.
+So if the hierarchy moves the holdout floor, the A->B->C ladder says *immediately*
+whether it was the skips (B already moves) or the pooling (only C moves).
+
+Features match ResMLPMin (pos-Fourier + velocity history + velocity-Fourier +
+unsigned distance-to-airfoil + airfoil mask) so the comparison isolates
+architecture, not the input encoding. Prediction is residual-delta off the last
+input frame with hard no-slip zeroing on the airfoil surface.
 """
 from __future__ import annotations
 
@@ -71,10 +78,7 @@ def _knn_graph(pos: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor, t
 
 
 def _voxel_grid_representatives(pos: torch.Tensor, num_samples: int) -> torch.Tensor:
-    """One representative per occupied voxel; voxel size targets ~num_samples cells.
-
-    Vendored from the 6th-place `graph_utils.farthest_point_sample` heuristic.
-    """
+    """One representative per occupied voxel; voxel size targets ~num_samples cells."""
     n = pos.size(0)
     if num_samples >= n:
         return torch.arange(n, device=pos.device)
@@ -138,7 +142,7 @@ def _knn_interpolate(feat_sub: torch.Tensor, pos_sub: torch.Tensor, pos_full: to
 
 
 # ---------------------------------------------------------------------------
-# Backbone layers (vendored from the 6th-place backbones.py)
+# Backbone layers (pre-LN graph attention)
 # ---------------------------------------------------------------------------
 
 class _FeedForward(nn.Module):
@@ -166,7 +170,12 @@ class _EdgeEncoder(nn.Module):
 
 
 class _GraphTransformerLayer(nn.Module):
-    """Local attention with edge-conditioned value bias (the submitted backbone)."""
+    """Local attention with edge-conditioned value bias, **pre-LN**.
+
+    Pre-LN keeps the residual stream a clean identity path and feeds each sublayer a
+    normalized copy (`x = x + sublayer(LN(x))`). This trains stably at depth without
+    LR warmup — the architectural fix for the post-LN stall, not a recipe change.
+    """
 
     def __init__(self, dim: int, heads: int, edge_dim: int):
         super().__init__()
@@ -185,27 +194,28 @@ class _GraphTransformerLayer(nn.Module):
         self.ff = _FeedForward(dim)
         self.norm2 = nn.LayerNorm(dim)
 
-    def forward(self, x: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
+    def _attn(self, h: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
         N, k = neighbors.shape
         H, d = self.heads, self.head_dim
 
-        q = self.W_q(x).view(N, 1, H, d)
-        k_nbr = self.W_k(x)[neighbors].view(N, k, H, d)
-        v_nbr = self.W_v(x)[neighbors].view(N, k, H, d)
+        q = self.W_q(h).view(N, 1, H, d)
+        k_nbr = self.W_k(h)[neighbors].view(N, k, H, d)
+        v_nbr = self.W_v(h)[neighbors].view(N, k, H, d)
         v_nbr = v_nbr + self.W_e(edge_feat).view(N, k, H, d)
 
         attn = (q * k_nbr).sum(-1) / self.scale          # (N, k, H)
         attn = F.softmax(attn, dim=1)
         out = (attn.unsqueeze(-1) * v_nbr).sum(1).reshape(N, -1)
-        out = self.W_o(out)
+        return self.W_o(out)
 
-        x = self.norm1(x + out)
-        x = self.norm2(x + self.ff(x))
+    def forward(self, x: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
+        x = x + self._attn(self.norm1(x), neighbors, edge_feat)
+        x = x + self.ff(self.norm2(x))
         return x
 
 
 class _GATLayer(nn.Module):
-    """GAT-style: edge bias added to attention scores (alternative backbone)."""
+    """GAT-style: edge bias added to attention scores, **pre-LN** (alternative backbone)."""
 
     def __init__(self, dim: int, heads: int, edge_dim: int):
         super().__init__()
@@ -224,21 +234,22 @@ class _GATLayer(nn.Module):
         self.ff = _FeedForward(dim)
         self.norm2 = nn.LayerNorm(dim)
 
-    def forward(self, x: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
+    def _attn(self, h: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
         N, k = neighbors.shape
         H, d = self.heads, self.head_dim
 
-        q = self.W_q(x).view(N, 1, H, d)
-        k_nbr = self.W_k(x)[neighbors].view(N, k, H, d)
-        v_nbr = self.W_v(x)[neighbors].view(N, k, H, d)
+        q = self.W_q(h).view(N, 1, H, d)
+        k_nbr = self.W_k(h)[neighbors].view(N, k, H, d)
+        v_nbr = self.W_v(h)[neighbors].view(N, k, H, d)
 
         attn = (q * k_nbr).sum(-1) / self.scale + self.edge_proj(edge_feat)
         attn = F.softmax(attn, dim=1)
         out = (attn.unsqueeze(-1) * v_nbr).sum(1).reshape(N, -1)
-        out = self.W_o(out)
+        return self.W_o(out)
 
-        x = self.norm1(x + out)
-        x = self.norm2(x + self.ff(x))
+    def forward(self, x: torch.Tensor, neighbors: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
+        x = x + self._attn(self.norm1(x), neighbors, edge_feat)
+        x = x + self.ff(self.norm2(x))
         return x
 
 
@@ -268,7 +279,7 @@ class _Level(nn.Module):
 
 
 class _TemporalAttentionHead(nn.Module):
-    """Per-node self-attention across the T_out output tokens (vendored)."""
+    """Per-node self-attention across the T_out output tokens, **pre-LN**."""
 
     def __init__(self, hidden: int, t_out: int, num_heads: int, num_attn_layers: int):
         super().__init__()
@@ -291,10 +302,9 @@ class _TemporalAttentionHead(nn.Module):
         N = x.size(0)
         h = self.proj(x).view(N, self.t_out, -1) + self.time_pe
         for attn, ff, n1, n2 in zip(self.attn_layers, self.ff_layers, self.norm1, self.norm2):
-            res = h
-            h, _ = attn(h, h, h)
-            h = n1(res + h)
-            h = n2(h + ff(h))
+            hn = n1(h)
+            h = h + attn(hn, hn, hn)[0]
+            h = h + ff(n2(h))
         return h                                          # (N, T_out, hidden)
 
 
@@ -307,12 +317,13 @@ class GraphUNet(nn.Module):
     def __init__(
         self,
         backbone: str = "graph_transformer",
-        hidden: int = 256,
-        heads: int = 8,
-        k: int = 24,
-        num_levels: int = 3,
-        blocks_per_level: int = 2,
+        hidden: int = 128,
+        heads: int = 4,
+        k: int = 16,
+        num_levels: int = 1,
+        blocks_per_level: int = 8,
         pool_ratio: float = 0.25,
+        use_skips: bool = True,
         temporal_attn_layers: int = 2,
         num_pos_freqs: int = 10,
         num_vel_freqs: int = 3,
@@ -329,6 +340,7 @@ class GraphUNet(nn.Module):
         self.k = k
         self.num_levels = num_levels
         self.pool_ratio = pool_ratio
+        self.use_skips = use_skips
         self.num_pos_freqs = num_pos_freqs
         self.num_vel_freqs = num_vel_freqs
         self.num_dist_freqs = num_dist_freqs
@@ -350,9 +362,14 @@ class GraphUNet(nn.Module):
         self.dec_levels = nn.ModuleList(
             [_Level(hidden, heads, blocks_per_level, backbone, use_checkpoint) for _ in range(num_levels - 1)]
         )
+        fuse_in = (2 if use_skips else 1) * hidden
         self.fuse = nn.ModuleList(
-            [nn.Linear(2 * hidden, hidden) for _ in range(num_levels - 1)]
+            [nn.Linear(fuse_in, hidden) for _ in range(num_levels - 1)]
         )
+
+        # Pre-LN leaves the residual stream unnormalized; a final norm before the
+        # head is standard (and necessary) for stable pre-LN transformers.
+        self.out_norm = nn.LayerNorm(hidden)
 
         self.temporal = _TemporalAttentionHead(hidden, T_OUT, heads, temporal_attn_layers)
         self.decoder = nn.Sequential(
@@ -374,8 +391,12 @@ class GraphUNet(nn.Module):
             print("[GraphUNet] norm_stats.pt not found — using identity normalization")
 
         n_params = sum(p.numel() for p in self.parameters())
-        print(f"[GraphUNet] backbone={backbone} hidden={hidden} num_levels={num_levels} "
-              f"blocks_per_level={blocks_per_level} k={k} | {n_params / 1e6:.2f}M params")
+        mode = ("flat" if num_levels == 1
+                else f"flat+skips" if pool_ratio >= 1.0
+                else "graph-unet")
+        print(f"[GraphUNet] mode={mode} backbone={backbone} hidden={hidden} heads={heads} "
+              f"num_levels={num_levels} blocks_per_level={blocks_per_level} k={k} "
+              f"pool_ratio={pool_ratio} use_skips={use_skips} | {n_params / 1e6:.2f}M params")
 
         path = os.path.join(os.path.dirname(__file__), "state_dict.pt")
         if os.path.exists(path):
@@ -413,12 +434,12 @@ class GraphUNet(nn.Module):
         air_mask = torch.zeros(num_points, dtype=torch.bool, device=pos.device)
         air_mask[airfoil_idx] = True
 
-        # ---- encoder (coarsen) ----
+        # ---- encoder (coarsen; pool_ratio>=1.0 keeps full resolution) ----
         p, air = pos, air_mask
         skips_h: list[torch.Tensor] = []
         skips_pos: list[torch.Tensor] = []
         for i in range(self.num_levels):
-            if i > 0:
+            if i > 0 and self.pool_ratio < 1.0:
                 target = max(int(round(p.shape[0] * self.pool_ratio)), self.k + 1)
                 sel = _boundary_aware_pool(p, target, air.nonzero(as_tuple=False).flatten())
                 p, x, air = p[sel], x[sel], air[sel]
@@ -428,15 +449,19 @@ class GraphUNet(nn.Module):
                 skips_h.append(x)
                 skips_pos.append(p)
 
-        # ---- decoder (refine, concat skips) ----
+        # ---- decoder (refine, optional skip concat) ----
         for i in range(self.num_levels - 2, -1, -1):
             x_up = _knn_interpolate(x, p, skips_pos[i])
-            x = self.fuse[i](torch.cat([x_up, skips_h[i]], dim=-1))
+            if self.use_skips:
+                x = self.fuse[i](torch.cat([x_up, skips_h[i]], dim=-1))
+            else:
+                x = self.fuse[i](x_up)
             p = skips_pos[i]
             neighbors, rel_pos, dist = _knn_graph(p, self.k)
             x = self.dec_levels[i](x, neighbors, rel_pos, dist)
 
         # ---- temporal head + residual-delta + no-slip ----
+        x = self.out_norm(x)
         xt = self.temporal(x)                                       # (N, T_out, H)
         delta = self.decoder(xt) * self.vel_std                     # (N, T_out, 3)
         pred = vel_in[-1].unsqueeze(1) + delta                      # (N, T_out, 3)

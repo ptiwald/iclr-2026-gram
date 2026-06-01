@@ -17,11 +17,12 @@ ema_decay: 0.999
 ema_warmup_steps: 100
 model_kwargs:
   backbone: graph_transformer
-  hidden: 256
-  heads: 8
-  k: 24
-  num_levels: 3
-  blocks_per_level: 2
+  hidden: 128
+  heads: 4
+  k: 16
+  num_levels: 3          # graph-U-Net — pooling buys reach, skips preserve detail
+  blocks_per_level: 2    # 2 full-res layers before first pool (little over-smoothing)
   pool_ratio: 0.25
+  use_skips: true
   temporal_attn_layers: 2
   use_checkpoint: true

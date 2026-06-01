@@ -17,10 +17,11 @@ ema_decay: 0.999
 ema_warmup_steps: 100
 model_kwargs:
   backbone: graph_transformer
-  hidden: 256
-  heads: 8
-  k: 24
-  num_levels: 1
-  blocks_per_level: 10
+  hidden: 128
+  heads: 4
+  k: 16
+  num_levels: 1          # flat baseline — reach via depth only
+  blocks_per_level: 8    # ~0.13 chord reach at k=16 (analyze/receptive_field_physics)
+  use_skips: true
   temporal_attn_layers: 2
   use_checkpoint: true

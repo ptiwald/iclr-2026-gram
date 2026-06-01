@@ -6,11 +6,12 @@ batch_size: 5
 bf16: true
 model_kwargs:
   backbone: graph_transformer
-  hidden: 256
-  heads: 8
-  k: 24
+  hidden: 128
+  heads: 4
+  k: 16
   num_levels: 3
   blocks_per_level: 2
   pool_ratio: 0.25
+  use_skips: true
   temporal_attn_layers: 2
   use_checkpoint: false
