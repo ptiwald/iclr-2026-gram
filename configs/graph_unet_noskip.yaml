@@ -1,0 +1,28 @@
+model: GraphUNet
+run_name: graph_unet_noskip
+data_dir: /workspace/data/augmented_train_warped-ifw
+split_file: augmented_split.json
+batch_size: 4
+num_workers: 8
+lr: 5.0e-4
+lr_schedule: cosine
+min_lr: 0.0
+epochs: 150
+device: cuda
+checkpoint_dir: /workspace/checkpoints
+log_dir: /workspace/logs
+max_steps: null
+bf16: true
+ema_decay: 0.999
+ema_warmup_steps: 100
+model_kwargs:
+  backbone: graph_transformer
+  hidden: 128
+  heads: 4
+  k: 16
+  num_levels: 3          # B' = C minus skips: pooling kept, skips removed
+  blocks_per_level: 2
+  pool_ratio: 0.25       # still coarsens (same as C) — isolates the skips
+  use_skips: false       # the only change vs graph_unet.yaml (C)
+  temporal_attn_layers: 2
+  use_checkpoint: true

@@ -1,0 +1,17 @@
+model: GraphUNet
+checkpoint: /workspace/checkpoints/graph_unet_noskip_best.pt
+data_dir: /workspace/data/warped-ifw-test-set
+split_file: holdout_split.json
+batch_size: 5
+bf16: true
+model_kwargs:
+  backbone: graph_transformer
+  hidden: 128
+  heads: 4
+  k: 16
+  num_levels: 3
+  blocks_per_level: 2
+  pool_ratio: 0.25
+  use_skips: false
+  temporal_attn_layers: 2
+  use_checkpoint: false
