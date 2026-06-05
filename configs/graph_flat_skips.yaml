@@ -2,7 +2,9 @@ model: GraphUNet
 run_name: graph_flat_skips
 data_dir: /workspace/data/augmented_train_warped-ifw
 split_file: augmented_split.json
-batch_size: 4
+batch_size: 2          # OOM at bs=4 (B is heaviest: ~10 full-res layers + skips, no pooling).
+                       # bs=2 gives 2x optimizer steps vs A/C (bs=4) — minor favorable confound
+                       # (~0.0015-0.002 by ResMLPMin scaling). Makes "B can't reach C" a conservative result.
 num_workers: 8
 lr: 5.0e-4
 lr_schedule: cosine
