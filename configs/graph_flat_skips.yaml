@@ -1,0 +1,28 @@
+model: GraphUNet
+run_name: graph_flat_skips
+data_dir: /workspace/data/augmented_train_warped-ifw
+split_file: augmented_split.json
+batch_size: 4
+num_workers: 8
+lr: 5.0e-4
+lr_schedule: cosine
+min_lr: 0.0
+epochs: 150
+device: cuda
+checkpoint_dir: /workspace/checkpoints
+log_dir: /workspace/logs
+max_steps: null
+bf16: true
+ema_decay: 0.999
+ema_warmup_steps: 100
+model_kwargs:
+  backbone: graph_transformer
+  hidden: 128
+  heads: 4
+  k: 16
+  num_levels: 3          # B = original rung B: skips WITHOUT coarsening
+  blocks_per_level: 2
+  pool_ratio: 1.0        # pooling OFF — 3 levels stay at full resolution
+  use_skips: true        # skips ON — isolates skips-at-full-res vs C's pool+skips
+  temporal_attn_layers: 2
+  use_checkpoint: true
