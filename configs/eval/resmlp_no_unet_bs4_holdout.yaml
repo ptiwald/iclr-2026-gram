@@ -1,0 +1,10 @@
+model: ResMLPNoUNet
+checkpoint: /workspace/checkpoints/resmlpnounet_bs4_best.pt
+data_dir: /workspace/data/warped-ifw-test-set
+split_file: holdout_split.json
+batch_size: 15
+bf16: true
+model_kwargs:
+  hidden: 256
+  num_pre: 2
+  num_post: 4
